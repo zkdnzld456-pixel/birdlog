@@ -682,8 +682,8 @@ $("#ed-save").onclick=async()=>{
   }catch(e){ toast("수정 저장 실패"); console.error(e); }
 };
 
-/* ============ 사진 압축 (긴 변 1600px · JPEG 0.8 · EXIF 방향 보정) ============ */
-const PH_MAX=1600, PH_Q=0.8;
+/* ============ 사진 압축 (긴 변 1200px · JPEG 0.75 · EXIF 방향 보정) ============ */
+const PH_MAX=1200, PH_Q=0.75;
 const BLANK_PX="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
 
 function exifOrientation(v,tiff){
