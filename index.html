@@ -262,6 +262,46 @@
     padding:13px;font-size:14px;font-weight:600;font-family:inherit;color:var(--amber-soft);cursor:pointer;
   }
 
+  /* ---- stats ---- */
+  .stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:22px}
+  @media (min-width:600px){.stat-grid{grid-template-columns:repeat(4,1fr)}}
+  .stat{background:#ffffff;border:1.5px solid var(--line);border-radius:11px;padding:12px 14px}
+  .stat b{display:block;font-family:"Gowun Batang",serif;font-weight:700;font-size:30px;line-height:1.2;
+    color:var(--amber);font-variant-numeric:tabular-nums}
+  .stat span{font-size:11.5px;font-weight:600;color:var(--muted);letter-spacing:.3px}
+  .st-sec{margin-bottom:22px}
+  .st-head{display:flex;align-items:center;gap:8px;margin-bottom:9px;min-height:28px}
+  .st-head h2{margin:0;font-size:11.5px;font-weight:700;letter-spacing:.8px;color:#3a4a4a;text-transform:uppercase}
+  .st-head small{margin-left:auto;font-size:11.5px;color:var(--muted-d)}
+  .st-sorts{margin-left:auto;display:flex;gap:5px}
+  .st-sorts .chip{padding:4px 9px;font-size:11.5px}
+  .mchart{background:#ffffff;border:1.5px solid var(--line);border-radius:11px;
+    height:170px;padding:12px 6px 8px;display:flex;align-items:stretch;gap:2px}
+  .mbar{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;
+    background:none;border:none;padding:0;font-family:inherit;cursor:pointer}
+  .mbar .tr{flex:1;min-height:0;width:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:3px}
+  .mbar .n{font-size:10.5px;font-weight:600;color:var(--amber-soft);font-variant-numeric:tabular-nums}
+  .mbar .b{width:100%;max-width:22px;min-height:3px;border-radius:5px 5px 2px 2px;
+    background:linear-gradient(180deg,var(--amber) 0%,var(--amber-d) 100%)}
+  .mbar.zero .b{background:var(--bark-2)}
+  .mbar.zero .n{color:var(--muted-d)}
+  .mbar .m{font-size:10px;font-weight:600;color:var(--muted);white-space:nowrap;letter-spacing:-.3px}
+  .mbar.cur .m{color:var(--amber-d);font-weight:800}
+  .mbar:active .b{opacity:.7}
+  .lifelist{background:#ffffff;border:1.5px solid var(--line);border-left:4px solid var(--amber);border-radius:11px;overflow:hidden}
+  .lrow{width:100%;display:flex;align-items:baseline;gap:10px;padding:9px 14px;
+    background:none;border:none;border-top:1px solid var(--bark-2);font-family:inherit;text-align:left;cursor:pointer}
+  .lrow:first-child{border-top:none}
+  .lrow:active{background:var(--bark)}
+  .lrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-family:"Gowun Batang",serif;font-weight:700;font-size:16px;color:var(--amber-soft)}
+  .lrow .fd{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .lrow .cn{min-width:38px;text-align:right;font-size:12.5px;font-weight:600;color:var(--amber);
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  .st-soon{background:var(--bark);border:1.5px dashed var(--line);border-radius:11px;
+    padding:26px 16px;text-align:center;font-size:13px;color:var(--muted)}
+  .st-soon b{display:block;font-size:14px;color:var(--cream);margin-bottom:3px}
+
   #toast{
     position:fixed;left:50%;bottom:98px;transform:translateX(-50%) translateY(20px);
     background:#16302f;color:#ffffff;padding:12px 20px;border-radius:24px;
@@ -362,11 +402,36 @@
       <button id="imp-json">불러오기</button>
     </div>
   </section>
+
+  <!-- ===== STATS ===== -->
+  <section id="v-stats" class="view">
+    <div class="stat-grid" id="st-sum"></div>
+    <div class="st-sec">
+      <div class="st-head"><h2>월별 관찰</h2><small>최근 12개월 · 기록 수</small></div>
+      <div class="mchart" id="st-months"></div>
+    </div>
+    <div class="st-sec">
+      <div class="st-head">
+        <h2>라이프리스트</h2>
+        <div class="st-sorts" id="st-sorts">
+          <span class="chip" data-s="first">첫 관찰일</span>
+          <span class="chip" data-s="name">이름</span>
+          <span class="chip" data-s="count">횟수</span>
+        </div>
+      </div>
+      <div id="st-life"></div>
+    </div>
+    <div class="st-sec">
+      <div class="st-head"><h2>관찰 지도</h2></div>
+      <div class="st-soon"><b>곧 추가돼요</b>기록한 위치를 지도에서 한눈에 볼 수 있게 준비하고 있어요.</div>
+    </div>
+  </section>
 </main>
 
 <nav>
   <button class="on" data-v="log"><span class="ic">✎</span>기록</button>
   <button data-v="list"><span class="ic">☰</span>목록</button>
+  <button data-v="stats"><span class="ic">◔</span>통계</button>
 </nav>
 
 <div id="toast"></div>
@@ -461,6 +526,10 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
+/* ============ 프리미엄 (준비만 — 아직 잠그는 기능 없음) ============ */
+const PREMIUM_ENABLED=false;
+let isPremium=false;
+
 /* ============ IndexedDB ============ */
 const DB_NAME="deulsae", STORE="obs";
 let _db=null;
@@ -588,6 +657,7 @@ async function renderAll(){
   $("#tagchips").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{activeTag=activeTag===c.dataset.tag?null:c.dataset.tag;renderAll();});
 
   renderList(obs);
+  if($("#v-stats").classList.contains("on")) renderStats(obs);   // 동기화로 바뀌면 열린 통계도 갱신
 }
 async function renderList(obsIn){
   const obs=obsIn||await allObs();
@@ -1330,8 +1400,77 @@ async function initSync(){
   if(sbUser) scheduleSync(400);
 }
 
+/* ============ 통계 ============ */
+let lifeSort="first", lifeRows=[];
+function canViewStats(){ return true; }   // 프리미엄 잠금 진입점 — 지금은 누구나 볼 수 있음
+async function renderStats(obsIn){
+  if(!canViewStats()) return;
+  const obs=obsIn||await allObs();
+  const now=new Date(), yr=String(now.getFullYear());
+  const num=v=>v.toLocaleString("ko-KR");
+
+  // 요약
+  const sp=new Set(), yrSp=new Set(); let yrN=0;
+  obs.forEach(o=>{
+    if(o.species) sp.add(o.species);
+    if((o.date||"").slice(0,4)===yr){yrN++;if(o.species)yrSp.add(o.species);}
+  });
+  $("#st-sum").innerHTML=[["총 종수",sp.size],["총 기록",obs.length],["올해 종수",yrSp.size],["올해 기록",yrN]]
+    .map(([l,v])=>`<div class="stat"><b>${num(v)}</b><span>${l}</span></div>`).join("");
+
+  // 월별 — 최근 12개월, 기록 없는 달도 0으로
+  const months=[], byKey={};
+  for(let i=11;i>=0;i--){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    const m={key:d.getFullYear()+"-"+pad(d.getMonth()+1),y:d.getFullYear(),m:d.getMonth()+1,n:0,sp:new Set()};
+    months.push(m); byKey[m.key]=m;
+  }
+  obs.forEach(o=>{const m=byKey[(o.date||"").slice(0,7)];if(m){m.n++;if(o.species)m.sp.add(o.species);}});
+  const max=Math.max(...months.map(m=>m.n));
+  const chart=$("#st-months");
+  chart.innerHTML=months.map((m,i)=>{
+    const h=m.n?Math.max(4,Math.round(m.n/max*80)):0;
+    return `<button class="mbar${m.n?"":" zero"}${i===11?" cur":""}" data-i="${i}" aria-label="${m.y}년 ${m.m}월 ${m.n}기록"><span class="tr"><span class="n">${m.n}</span><span class="b" style="height:${h}%"></span></span><span class="m">${m.m}월</span></button>`;
+  }).join("");
+  chart.querySelectorAll(".mbar").forEach(b=>b.onclick=()=>{const m=months[+b.dataset.i];toast(`${m.y}년 ${m.m}월 · ${m.sp.size}종 · ${m.n}기록`);});
+
+  // 라이프리스트
+  const life={};
+  obs.forEach(o=>{
+    if(!o.species) return;
+    const s=life[o.species]||(life[o.species]={name:o.species,n:0,first:""});
+    s.n++;
+    const k=o.date?o.date+"T"+(o.time||"00:00"):"";
+    if(k&&(!s.first||k<s.first)) s.first=k;
+  });
+  const byName=(a,b)=>a.name.localeCompare(b.name,"ko");
+  lifeRows=Object.values(life).sort(
+    lifeSort==="name"?byName:
+    lifeSort==="count"?(a,b)=>b.n-a.n||byName(a,b):
+    (a,b)=>(b.first>a.first?1:b.first<a.first?-1:0)||byName(a,b));   // 첫 관찰일 최근 먼저, 날짜 없으면 맨 뒤
+  document.querySelectorAll("#st-sorts .chip").forEach(c=>c.classList.toggle("on",c.dataset.s===lifeSort));
+  const wrap=$("#st-life");
+  if(!lifeRows.length){wrap.innerHTML=`<div class="empty"><p><b>아직 본 종이 없어요</b></p><p>‘기록’ 탭에서 첫 관찰을 남겨 보세요.</p></div>`;return;}
+  wrap.innerHTML=`<div class="lifelist">${lifeRows.map((s,i)=>`<button class="lrow" data-i="${i}"><span class="nm">${esc(s.name)}</span><span class="fd">${s.first?s.first.slice(0,10).replace(/-/g,"."):"—"}</span><span class="cn">${num(s.n)}회</span></button>`).join("")}</div>`;
+  wrap.querySelectorAll(".lrow").forEach(r=>r.onclick=()=>openSpecies(lifeRows[+r.dataset.i].name));
+}
+/* 라이프리스트 행 → 목록 탭에서 그 종만 */
+async function openSpecies(name){
+  activeSpecies=name; activeTag=null; $("#search").value="";
+  await showTab("list");
+  window.scrollTo(0,0);
+  const c=$("#spchips .chip.on"); if(c) c.scrollIntoView({block:"nearest",inline:"center"});
+}
+document.querySelectorAll("#st-sorts .chip").forEach(c=>c.onclick=()=>{lifeSort=c.dataset.s;renderStats();});
+
 /* ============ tabs ============ */
-document.querySelectorAll("nav button").forEach(btn=>{btn.onclick=()=>{document.querySelectorAll("nav button").forEach(b=>b.classList.remove("on"));btn.classList.add("on");const v=btn.dataset.v;$("#v-log").classList.toggle("on",v==="log");$("#v-list").classList.toggle("on",v==="list");if(v==="list")renderAll();};});
+async function showTab(v){
+  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
+  ["log","list","stats"].forEach(k=>$("#v-"+k).classList.toggle("on",k===v));
+  if(v==="list") await renderAll();
+  if(v==="stats") await renderStats();
+}
+document.querySelectorAll("nav button").forEach(btn=>btn.onclick=()=>showTab(btn.dataset.v));
 $("#search").oninput=()=>renderList();
 $("#sort").onchange=()=>renderList();
 
