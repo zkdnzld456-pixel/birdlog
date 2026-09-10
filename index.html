@@ -190,6 +190,8 @@
   .card .photos{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
   .card .photos img{width:62px;height:62px;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:block}
   .card .photos .ph{position:relative;display:inline-block}
+  .card .photos img.ph-load{background:var(--bark-2);animation:phpulse 1.2s ease-in-out infinite}
+  @keyframes phpulse{0%,100%{opacity:1}50%{opacity:.5}}
   .card .photos .phdel{
     position:absolute;top:-7px;right:-7px;width:22px;height:22px;border-radius:50%;
     border:2px solid #fff;background:#16302f;color:#fff;font-size:11px;line-height:1;
@@ -444,8 +446,21 @@ function db(){return new Promise((res,rej)=>{if(_db)return res(_db);const r=inde
 async function tx(m){return (await db()).transaction(STORE,m).objectStore(STORE);}
 async function putObs(o){const s=await tx("readwrite");return new Promise((res,rej)=>{const r=s.put(o);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
 async function delObs(id){const s=await tx("readwrite");return new Promise((res,rej)=>{const r=s.delete(id);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
-async function getObs(id){const s=await tx("readonly");return new Promise((res,rej)=>{const r=s.get(id);r.onsuccess=()=>res(r.result||null);r.onerror=()=>rej(r.error);});}
-async function allRows(){const s=await tx("readonly");return new Promise((res,rej)=>{const r=s.getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error);});}
+async function rawGet(id){const s=await tx("readonly");return new Promise((res,rej)=>{const r=s.get(id);r.onsuccess=()=>res(r.result||null);r.onerror=()=>rej(r.error);});}
+async function rawAll(){const s=await tx("readonly");return new Promise((res,rej)=>{const r=s.getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error);});}
+/* 예전 기록의 photos(Blob 배열)를 {id,blob,path,uploaded} 배열로 올려붙임 */
+function normPhotos(o){
+  if(!Array.isArray(o.photos)){o.photos=[];return true;}
+  const before=o.photos.length;
+  let changed=false;
+  o.photos=o.photos.map(p=>{
+    if(p instanceof Blob){changed=true;return {id:uid(),blob:p,path:null,uploaded:false};}
+    return p;
+  }).filter(p=>p&&(p.blob instanceof Blob||p.path));
+  return changed||o.photos.length!==before;
+}
+async function getObs(id){const o=await rawGet(id);if(o&&normPhotos(o))await putObs(o);return o;}
+async function allRows(){const rows=await rawAll();for(const o of rows){if(normPhotos(o))await putObs(o);}return rows;}
 async function allObs(){return (await allRows()).filter(o=>!o.deleted);}  // 삭제 표시(묘비)는 화면에서 제외
 
 /* ============ helpers ============ */
@@ -587,12 +602,12 @@ async function renderList(obsIn){
       ${o.lat!=null?`<div class="geo"><span class="coord">${o.lat.toFixed(5)}, ${o.lng.toFixed(5)}</span><button class="cpgeo" data-lat="${o.lat}" data-lng="${o.lng}">좌표 복사</button><a class="mapgeo" href="https://www.google.com/maps/search/?api=1&query=${o.lat},${o.lng}" target="_blank" rel="noopener">구글맵</a></div>`:""}
       ${o.memo?`<div class="memo">${esc(o.memo)}</div>`:""}
       ${tags?`<div class="tags">${tags}</div>`:""}
-      <div class="photos">${o.photos.map((_,i)=>`<span class="ph"><img data-ph="${i}" alt="사진"><button class="phdel" data-id="${o.id}" data-ph="${i}" aria-label="사진 삭제">✕</button></span>`).join("")}</div>
+      <div class="photos">${o.photos.map((p,i)=>`<span class="ph"><img data-ph="${i}" alt="사진"><button class="phdel" data-id="${o.id}" data-phid="${p.id}" aria-label="사진 삭제">✕</button></span>`).join("")}</div>
       <div class="actions"><button class="edit" data-id="${o.id}">수정</button><button class="addph" data-id="${o.id}">＋ 사진</button><button class="mkcard" data-id="${o.id}">카드 만들기</button><button class="del" data-id="${o.id}">삭제</button></div>
     </div>`;
   }).join("");
-  rows.forEach(o=>{const card=wrap.querySelector(`.card[data-id="${o.id}"]`);if(!card)return;card.querySelectorAll("img[data-ph]").forEach(img=>{const i=+img.dataset.ph,b=o.photos[i];if(b instanceof Blob)img.src=URL.createObjectURL(b);});});
-  wrap.querySelectorAll(".phdel").forEach(b=>b.onclick=async ev=>{ev.stopPropagation();if(!confirm("이 사진을 삭제할까요?"))return;const obs=await allObs();const o=obs.find(x=>x.id===b.dataset.id);if(!o)return;o.photos.splice(+b.dataset.ph,1);await putObs(o);await renderAll();toast("사진 삭제됨");});
+  rows.forEach(o=>{const card=wrap.querySelector(`.card[data-id="${o.id}"]`);if(!card)return;card.querySelectorAll("img[data-ph]").forEach(img=>{const p=o.photos[+img.dataset.ph];if(!p)return;if(p.blob instanceof Blob)img.src=URL.createObjectURL(p.blob);else if(p.path){img.src=BLANK_PX;img.classList.add("ph-load");fetchPhoto(o.id,p,img);}});});
+  wrap.querySelectorAll(".phdel").forEach(b=>b.onclick=async ev=>{ev.stopPropagation();if(!confirm("이 사진을 삭제할까요?"))return;const o=await getObs(b.dataset.id);if(!o)return;const i=(o.photos||[]).findIndex(p=>p.id===b.dataset.phid);if(i<0)return;const p=o.photos.splice(i,1)[0];await saveObs(o);if(p&&p.path)queuePhotoRemove(p.path);await renderAll();toast("사진 삭제됨");});
   wrap.querySelectorAll(".edit").forEach(b=>b.onclick=()=>openEditor(b.dataset.id));
   wrap.querySelectorAll(".addph").forEach(b=>b.onclick=()=>startAddPhoto(b.dataset.id));
   wrap.querySelectorAll(".cpgeo").forEach(b=>b.onclick=async()=>{
@@ -645,9 +660,112 @@ $("#ed-save").onclick=async()=>{
   }catch(e){ toast("수정 저장 실패"); console.error(e); }
 };
 
+/* ============ 사진 압축 (긴 변 1600px · JPEG 0.8 · EXIF 방향 보정) ============ */
+const PH_MAX=1600, PH_Q=0.8;
+const BLANK_PX="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+
+function exifOrientation(v,tiff){
+  try{
+    const le=v.getUint16(tiff)===0x4949;
+    if(v.getUint16(tiff+2,le)!==0x002A) return 1;
+    const ifd=tiff+v.getUint32(tiff+4,le);
+    const n=v.getUint16(ifd,le);
+    for(let i=0;i<n;i++){
+      const e=ifd+2+i*12;
+      if(v.getUint16(e,le)===0x0112) return v.getUint16(e+8,le)||1;
+    }
+  }catch(e){}
+  return 1;
+}
+/* JPEG 헤더에서 EXIF 방향과 (회전 전) 원본 크기를 읽음 */
+async function jpegMeta(blob){
+  const res={or:1,w:0,h:0};
+  if(!/jpe?g/i.test(blob.type||"")) return res;
+  try{
+    const v=new DataView(await blob.slice(0,Math.min(blob.size,512*1024)).arrayBuffer());
+    if(v.getUint16(0)!==0xFFD8) return res;
+    let off=2;
+    while(off+4<=v.byteLength){
+      if(v.getUint8(off)!==0xFF){off++;continue;}
+      const m=v.getUint8(off+1);
+      if(m===0xD8||m===0x01||(m>=0xD0&&m<=0xD7)){off+=2;continue;}
+      if(m===0xDA) break;
+      const len=v.getUint16(off+2), seg=off+4;
+      if(len<2) break;
+      if(m===0xE1&&seg+6<=v.byteLength&&v.getUint32(seg)===0x45786966){ res.or=exifOrientation(v,seg+6); }
+      else if(m>=0xC0&&m<=0xCF&&m!==0xC4&&m!==0xC8&&m!==0xCC){
+        if(seg+5<=v.byteLength){res.h=v.getUint16(seg+1);res.w=v.getUint16(seg+3);}
+        break;
+      }
+      off+=2+len;
+    }
+  }catch(e){}
+  return res;
+}
+async function decodeImage(blob){
+  if(window.createImageBitmap){
+    try{ return await createImageBitmap(blob,{imageOrientation:"from-image"}); }catch(e){}
+    try{ return await createImageBitmap(blob); }catch(e){}
+  }
+  const url=URL.createObjectURL(blob);
+  try{ return await loadImg(url); }
+  finally{ setTimeout(()=>URL.revokeObjectURL(url),2000); }
+}
+function drawOriented(ctx,or,dw,dh){
+  switch(or){
+    case 2: ctx.transform(-1,0,0,1,dw,0); break;
+    case 3: ctx.transform(-1,0,0,-1,dw,dh); break;
+    case 4: ctx.transform(1,0,0,-1,0,dh); break;
+    case 5: ctx.transform(0,1,1,0,0,0); break;
+    case 6: ctx.transform(0,1,-1,0,dh,0); break;
+    case 7: ctx.transform(0,-1,-1,0,dh,dw); break;
+    case 8: ctx.transform(0,-1,1,0,0,dw); break;
+  }
+}
+async function compressPhoto(file){
+  if(!(file instanceof Blob)||!/^image\//.test(file.type||"")) return file;
+  let src=null;
+  try{
+    const meta=await jpegMeta(file);
+    src=await decodeImage(file);
+    const sw=src.naturalWidth||src.width, sh=src.naturalHeight||src.height;
+    if(!sw||!sh) return file;
+    // 브라우저가 EXIF 방향을 이미 적용했는지 원본 크기와 비교해 판단 (이중 회전 방지)
+    const rot=meta.or>=5&&meta.or<=8&&meta.w&&meta.h&&meta.w!==meta.h&&sw===meta.w;
+    const or=rot?meta.or:1, swap=or>=5;
+    const logW=swap?sh:sw, logH=swap?sw:sh;
+    const scale=Math.min(1,PH_MAX/Math.max(logW,logH));
+    if(scale===1&&or===1&&/jpe?g/i.test(file.type)) return file;
+    const outW=Math.round(logW*scale), outH=Math.round(logH*scale);
+    const dw=swap?outH:outW, dh=swap?outW:outH;
+    const cv=document.createElement("canvas");
+    cv.width=outW; cv.height=outH;
+    const ctx=cv.getContext("2d");
+    ctx.imageSmoothingQuality="high";
+    if(or!==1) drawOriented(ctx,or,dw,dh);
+    ctx.drawImage(src,0,0,dw,dh);
+    const out=await new Promise(r=>cv.toBlob(r,"image/jpeg",PH_Q));
+    if(!out||out.size>=file.size) return file;   // 원본보다 크면 원본 유지
+    return out;
+  }catch(e){ console.error("compress",e); return file; }
+  finally{ if(src&&src.close) src.close(); }
+}
+
 /* ============ photos ============ */
 let photoTargetId=null;function startAddPhoto(id){photoTargetId=id;$("#photofile").value="";$("#photofile").click();}
-$("#photofile").onchange=async e=>{const files=[...e.target.files];if(!files.length||!photoTargetId)return;const obs=await allObs();const o=obs.find(x=>x.id===photoTargetId);if(!o)return;o.photos=o.photos.concat(files);await putObs(o);await renderAll();toast(files.length+"장 추가됨");};
+$("#photofile").onchange=async e=>{
+  const files=[...e.target.files];
+  if(!files.length||!photoTargetId)return;
+  const o=await getObs(photoTargetId);
+  if(!o)return;
+  if(files.length>1) toast(files.length+"장 준비 중…");
+  const items=[];
+  for(const f of files){ items.push({id:uid(),blob:await compressPhoto(f),path:null,uploaded:false}); }
+  o.photos=(o.photos||[]).concat(items);
+  await saveObs(o);
+  await renderAll();
+  toast(files.length+"장 추가됨");
+};
 
 /* ============ 공유 카드 메이커 ============ */
 const WM_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="2 9 52 52"><ellipse cx="34" cy="39" rx="12" ry="15" fill="#0f9aa3"/><ellipse cx="29" cy="43" rx="6.5" ry="9" fill="#ef9156"/><circle cx="30" cy="23" r="12" fill="#0f9aa3"/><path d="M18 23 a12 12 0 0 1 24 0 Z" fill="#0b7d85"/><path d="M18 23 L2 26 L18 28 Z" fill="#e8824a"/><circle cx="24" cy="30" r="3.2" fill="#fff"/><circle cx="29" cy="26" r="2.8" fill="#0d2b29"/></svg>';
@@ -671,11 +789,20 @@ async function openCardMaker(id){
   const zs=$("#cm-zoom"); if(zs) zs.value=1;
   document.querySelectorAll(".cm-ratio").forEach(b=>b.classList.toggle("on",b.dataset.ratio==="square"));
   $("#cardmaker").style.display="flex";
+  await ensureCardPhotos();
   buildPicks();
   await loadCardPhoto();
   await renderCard();
 }
-function cardBlobs(){ return (cardObs&&cardObs.photos)?cardObs.photos.filter(b=>b instanceof Blob):[]; }
+function cardBlobs(){ return (cardObs&&cardObs.photos)?cardObs.photos.filter(p=>p&&p.blob instanceof Blob).map(p=>p.blob):[]; }
+async function ensureCardPhotos(){   // 아직 안 받은 사진이 있으면 먼저 받아 옴
+  if(!cardObs) return;
+  const miss=(cardObs.photos||[]).filter(p=>p.path&&!(p.blob instanceof Blob));
+  if(!miss.length) return;
+  for(const p of miss) await fetchPhoto(cardObs.id,p,null);
+  const fresh=await getObs(cardObs.id);
+  if(fresh) cardObs=fresh;
+}
 function buildPicks(){
   const wrap=$("#cm-picks"); const blobs=cardBlobs();
   if(blobs.length<2){ wrap.style.display="none"; wrap.innerHTML=""; return; }
@@ -862,7 +989,7 @@ async function download(name,blob){
 function blobToDataURL(b){return new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(b);});}
 function dataURLtoBlob(d){const[h,b]=d.split(",");const mime=(h.match(/:(.*?);/)||[])[1]||"image/jpeg";const bin=atob(b);const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return new Blob([u8],{type:mime});}
 function today(){const d=new Date();return d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate());}
-$("#exp-json").onclick=async()=>{const obs=await allObs();const out=[];for(const o of obs){const photos=[];for(const b of o.photos){if(b instanceof Blob)photos.push(await blobToDataURL(b));}out.push({...o,photos});}download("Birdlog_백업_"+today()+".json",new Blob([JSON.stringify(out,null,2)],{type:"application/json"}));};
+$("#exp-json").onclick=async()=>{const obs=await allObs();const out=[];for(const o of obs){const photos=[];for(const p of (o.photos||[])){if(p&&p.blob instanceof Blob)photos.push(await blobToDataURL(p.blob));}out.push({...o,photos});}download("Birdlog_백업_"+today()+".json",new Blob([JSON.stringify(out,null,2)],{type:"application/json"}));};
 $("#exp-csv").onclick=async()=>{const obs=await allObs();const head=["종명","날짜","시간","지명","위도","경도","개체수","해시태그","메모","사진수"];const e=v=>`"${String(v??"").replace(/"/g,'""')}"`;const lines=[head.join(",")];obs.sort((a,b)=>obsDate(b)-obsDate(a)).forEach(o=>{lines.push([o.species,o.date,o.time,o.place??"",o.lat??"",o.lng??"",o.count??"",o.tags.map(t=>"#"+t).join(" "),o.memo,o.photos.length].map(e).join(","));});download("Birdlog_"+today()+".csv",new Blob(["\uFEFF"+lines.join("\n")],{type:"text/csv"}));};
 $("#imp-json").onclick=()=>{$("#importfile").value="";$("#importfile").click();};
 $("#importfile").onchange=async e=>{
@@ -874,8 +1001,9 @@ $("#importfile").onchange=async e=>{
     for(const rec of arr){
       const photos=[];
       for(const p of (rec.photos||[])){
-        if(typeof p==="string"&&p.startsWith("data:"))photos.push(dataURLtoBlob(p));
-        else if(p instanceof Blob)photos.push(p);
+        if(typeof p==="string"&&p.startsWith("data:"))photos.push({id:uid(),blob:dataURLtoBlob(p),path:null,uploaded:false});
+        else if(p instanceof Blob)photos.push({id:uid(),blob:p,path:null,uploaded:false});
+        else if(p&&typeof p==="object"&&p.blob instanceof Blob)photos.push({id:p.id||uid(),blob:p.blob,path:null,uploaded:false});
       }
       await saveObs({...rec,photos,tags:Array.isArray(rec.tags)?rec.tags:[],id:rec.id||uid()});
       n++;
@@ -888,7 +1016,7 @@ $("#importfile").onchange=async e=>{
 const SB_URL="https://wmbmkwkyvbqlelcmrroh.supabase.co";
 const SB_KEY="sb_publishable__CEtK43l-PlF6unAsLuEwQ_boEmL4ZQ";
 const SB_TABLE="observations";
-const SB_COLS="id,species,date,time,lat,lng,acc,place,count,tags,memo,created,updated_at";
+const SB_COLS="id,species,date,time,lat,lng,acc,place,count,tags,memo,photos,created,updated_at";
 let sb=null, sbUser=null, syncBusy=false, syncAgain=false, syncTimer=null;
 
 function sbClient(){
@@ -904,8 +1032,8 @@ async function saveObs(o){await putObs(touch(o));scheduleSync();}
 async function removeObs(id){
   const o=await getObs(id);
   if(!o) return;
-  if(o.remote){o.deleted=true;o.photos=[];await putObs(touch(o));scheduleSync();}
-  else await delObs(id);
+  if(o.remote){(o.photos||[]).forEach(p=>{if(p.path)queuePhotoRemove(p.path);});o.deleted=true;o.photos=[];await putObs(touch(o));scheduleSync();}
+  else {(o.photos||[]).forEach(p=>{if(p.path)queuePhotoRemove(p.path);});await delObs(id);}
 }
 
 /* --- 헤더 표시 --- */
@@ -914,7 +1042,14 @@ function authUI(){
   b.textContent=sbUser?(sbUser.email||"로그인됨"):"로그인";
   b.classList.toggle("in",!!sbUser);
 }
-async function pendingCount(){return (await allRows()).filter(o=>o.dirty).length;}
+async function pendingCount(){   // 아직 못 올린 기록 + 사진
+  let n=0;
+  for(const o of await allRows()){
+    if(o.dirty) n++;
+    if(!o.deleted) n+=(o.photos||[]).filter(p=>!p.uploaded&&p.blob instanceof Blob).length;
+  }
+  return n;
+}
 async function syncUI(){
   const el=$("#sync-state");if(!el)return;
   if(!sbUser){el.className="syncst";el.textContent="로그인 안 함";return;}
@@ -925,12 +1060,13 @@ async function syncUI(){
   el.textContent=n?"대기 "+n+"건":"동기화됨";
 }
 
-/* --- 서버 <-> 로컬 변환 (photos 는 이번 단계에서 건드리지 않음) --- */
+/* --- 서버 <-> 로컬 변환 (photos 컬럼에는 Storage 경로만) --- */
 function toRemote(o){
   return {id:o.id,user_id:sbUser.id,species:o.species||"",
     date:o.date||null,time:o.time||null,
     lat:o.lat??null,lng:o.lng??null,acc:o.acc??null,place:o.place??null,
     count:o.count??null,tags:Array.isArray(o.tags)?o.tags:[],memo:o.memo||"",
+    photos:(o.photos||[]).filter(p=>p.uploaded&&p.path).map(p=>p.path),
     created:o.created||Date.now(),updated_at:o.updated_at||new Date().toISOString()};
 }
 function fromRemote(r,local){
@@ -938,10 +1074,21 @@ function fromRemote(r,local){
     date:r.date||"",time:(r.time||"").slice(0,5),
     lat:r.lat??null,lng:r.lng??null,acc:r.acc??null,place:r.place??null,
     count:r.count??null,tags:Array.isArray(r.tags)?r.tags:[],memo:r.memo||"",
-    photos:(local&&local.photos)||[],created:Number(r.created)||Date.now(),
+    photos:mergePhotos(r.photos,local),created:Number(r.created)||Date.now(),
     updated_at:r.updated_at||new Date().toISOString(),dirty:false,deleted:false,remote:true};
 }
 function stamp(v){const t=Date.parse(v||"");return isNaN(t)?0:t;}
+/* 서버 경로 목록 + 로컬 사진 합치기 — 받아 둔 blob 은 그대로 재사용 */
+function mergePhotos(paths,local){
+  const cur=(local&&local.photos)||[], byPath={};
+  cur.forEach(p=>{if(p.path)byPath[p.path]=p;});
+  const out=(paths||[]).map(path=>{
+    const ex=byPath[path];
+    return ex?{...ex,path,uploaded:true}:{id:pathPhId(path),blob:null,path,uploaded:true};
+  });
+  cur.forEach(p=>{if(!p.path&&p.blob instanceof Blob)out.push(p);});   // 아직 못 올린 사진은 유지
+  return out;
+}
 
 /* --- 첫 로그인: 기존 로컬 기록을 전부 올림 --- */
 async function migrateOnce(){
@@ -1000,6 +1147,73 @@ async function pushLocal(){
   return true;
 }
 
+
+/* --- 사진 Storage --- */
+const PH_BUCKET="photos";
+const phFetching=new Set();
+function phPath(obsId,phId){return sbUser.id+"/"+obsId+"/"+phId+".jpg";}
+function pathPhId(path){return (path.split("/").pop()||uid()).replace(/\.[^.]+$/,"");}
+
+/* 삭제된 사진은 목록에 쌓아 두고 다음 동기화 때 서버에서 지움 */
+function removalQueue(){try{return JSON.parse(localStorage.getItem("bl_ph_removed")||"[]");}catch(e){return [];}}
+function queuePhotoRemove(path){
+  if(!path) return;
+  const q=removalQueue();
+  if(!q.includes(path)){q.push(path);localStorage.setItem("bl_ph_removed",JSON.stringify(q));}
+  scheduleSync();
+}
+async function flushPhotoRemovals(){
+  const q=removalQueue();
+  if(!q.length) return;
+  const {error}=await sbClient().storage.from(PH_BUCKET).remove(q);
+  if(error){console.error("photo remove",error);return;}
+  localStorage.setItem("bl_ph_removed","[]");
+}
+
+/* 아직 안 올린 사진 업로드 → path 를 기록에 반영하고 dirty 로 표시 */
+async function uploadPhotos(){
+  for(const o of await allRows()){
+    if(o.deleted) continue;
+    // 계정이 바뀌면 남의 경로에 있던 사진도 내 경로로 다시 올림
+    const todo=(o.photos||[]).filter(p=>p.blob instanceof Blob&&(!p.uploaded||!p.path||p.path.indexOf(sbUser.id+"/")!==0));
+    if(!todo.length) continue;
+    const done={};
+    for(const p of todo){
+      const path=phPath(o.id,p.id);
+      const {error}=await sbClient().storage.from(PH_BUCKET)
+        .upload(path,p.blob,{contentType:p.blob.type||"image/jpeg",upsert:true});
+      if(error){console.error("photo upload",error);continue;}   // 실패는 다음 동기화에 재시도
+      done[p.id]=path;
+    }
+    if(!Object.keys(done).length) continue;
+    const cur=await getObs(o.id);
+    if(!cur) continue;
+    cur.photos=(cur.photos||[]).map(p=>done[p.id]?{...p,path:done[p.id],uploaded:true}:p);
+    await putObs(touch(cur));
+  }
+}
+
+/* 다른 기기에서 올린 사진을 필요할 때 받아 로컬에 캐시 */
+async function fetchPhoto(obsId,ph,img){
+  if(!ph||!ph.path||ph.blob instanceof Blob) return;
+  if(!sbClient()||!sbUser||!navigator.onLine) return;
+  const key=obsId+"|"+ph.id;
+  if(phFetching.has(key)) return;
+  phFetching.add(key);
+  try{
+    const {data,error}=await sbClient().storage.from(PH_BUCKET).download(ph.path);
+    if(error||!data) throw error||new Error("빈 응답");
+    ph.blob=data;
+    const cur=await getObs(obsId);
+    if(cur){
+      const t=(cur.photos||[]).find(p=>p.id===ph.id);
+      if(t&&!(t.blob instanceof Blob)){t.blob=data;t.uploaded=true;t.path=ph.path;await putObs(cur);}
+    }
+    if(img&&img.isConnected){img.src=URL.createObjectURL(data);img.classList.remove("ph-load");}
+  }catch(e){ console.error("photo download",e); }
+  finally{ phFetching.delete(key); }
+}
+
 async function syncNow(){
   if(!sbClient()||!sbUser||!navigator.onLine){await syncUI();return;}
   if(syncBusy){syncAgain=true;return;}
@@ -1008,7 +1222,9 @@ async function syncNow(){
   try{
     await migrateOnce();
     changed=await pullRemote();
+    await uploadPhotos();
     await pushLocal();
+    await flushPhotoRemovals();
   }catch(e){console.error("sync",e);}
   syncBusy=false;
   if(changed){await refreshSpeciesList();await renderAll();}
