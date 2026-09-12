@@ -375,6 +375,14 @@
   .leaflet-container{font-family:inherit;font-size:13px;background:var(--bark)}
   .leaflet-popup-content-wrapper{border-radius:10px;box-shadow:0 8px 24px rgba(20,60,60,.20)}
   .leaflet-popup-content{margin:10px 13px;line-height:1.45}
+  /* 지도를 길게 누르는 동작과 겹치므로, 팝업 안에서는 iOS 의 텍스트 선택·길게 누르기
+     메뉴가 뜨지 않게 한다. 탭은 그대로 먹는다. */
+  .leaflet-popup-content,.leaflet-popup-content *{
+    user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
+  }
+  /* 날짜 입력은 글자를 고를 수 있어야 하고, 편의점 링크는 iOS 기본 동작을 남긴다 */
+  .pop input.plan-date{user-select:text;-webkit-user-select:text}
+  .pop .cvs-row{-webkit-touch-callout:default}
   .pop b{display:block;font-family:"Gowun Batang",serif;font-weight:700;font-size:16px;
     color:var(--amber-soft);margin-bottom:2px}
   .pop span{display:block;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -1934,6 +1942,9 @@ async function initSync(){
 /* Leaflet 의 maxWidth 는 .leaflet-popup-content 기준. 그 CSS 여백(좌우 13px)을 빼야
    화면에 보이는 팝업 전체가 260px 를 넘지 않는다. */
 const POPUP_MAX_W=234;
+/* 팝업이 열릴 때 지도가 알아서 움직인다. 좌상단 줌 컨트롤과 "내 관찰 지도 · N곳"
+   라벨을 덮지 않도록 그만큼 여유를 둔다. */
+const POPUP_OPTS={maxWidth:POPUP_MAX_W,autoPanPadding:[60,70]};
 let favCache=[];
 function favId(lat,lng){return lat.toFixed(5)+","+lng.toFixed(5);}
 function isFav(lat,lng){return Number.isFinite(lat)&&Number.isFinite(lng)&&favCache.some(f=>f.id===favId(lat,lng));}
@@ -2045,7 +2056,7 @@ function openSpotPopup(latlng){
   const ll=latlng.wrap?latlng.wrap():latlng;
   const lat=Math.round(ll.lat*1e5)/1e5, lng=Math.round(ll.lng*1e5)/1e5;
   const coord=fmtCoord(lat,lng);
-  spotPopup=L.popup({maxWidth:POPUP_MAX_W})
+  spotPopup=L.popup(POPUP_OPTS)
     .setLatLng([lat,lng])
     .setContent(`<div class="pop"><b>${esc(coord)}</b><span>기록 없는 지점</span>`
       +planBlockHTML(lat,lng,coord)+`</div>`)
@@ -2218,7 +2229,7 @@ function renderMap(obs){
 
   blPins.clearLayers();
   pts.forEach(o=>{
-    L.marker([o.lat,o.lng],{icon:blPinIcon,title:o.species||""}).bindPopup(pinPopup(o),{maxWidth:POPUP_MAX_W}).addTo(blPins);
+    L.marker([o.lat,o.lng],{icon:blPinIcon,title:o.species||""}).bindPopup(pinPopup(o),POPUP_OPTS).addTo(blPins);
   });
 
   // 핀 구성이 바뀐 경우에만 화면을 다시 맞춘다 (탭을 오갈 때 보던 위치가 튀지 않게)
