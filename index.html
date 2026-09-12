@@ -366,6 +366,41 @@
     color:var(--amber-soft);margin-bottom:2px}
   .pop span{display:block;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 
+  /* ---- 팝업 안 계획 블록 (날짜별 일출·박명) ---- */
+  .pop .plan{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);
+    display:flex;flex-direction:column;gap:6px}
+  .pop .plan input.plan-date{
+    width:100%;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--cream);
+    background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:6px 8px;
+  }
+  .pop .plan .plan-sun{display:block;font-size:11.5px;font-weight:600;line-height:1.55;
+    color:var(--amber-d);font-variant-numeric:tabular-nums}
+  .pop .plan .plan-fav{
+    align-self:flex-start;background:var(--bark);border:1.5px solid var(--line);border-radius:8px;
+    padding:6px 10px;font-size:12px;font-weight:700;font-family:inherit;color:var(--muted);cursor:pointer;
+  }
+  .pop .plan .plan-fav.on{background:var(--amber);border-color:var(--amber);color:#fff}
+  .map-hint{font-size:11.5px;color:var(--muted-d);margin:7px 2px 0;line-height:1.5}
+
+  /* ---- 내 탐조 장소 ---- */
+  .favdate{
+    margin-left:auto;width:auto;flex:none;font-family:inherit;font-size:12.5px;font-weight:600;
+    color:var(--cream);background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:5px 9px;
+  }
+  .favlist{background:#ffffff;border:1.5px solid var(--line);border-left:4px solid var(--amber);
+    border-radius:11px;overflow:hidden}
+  .favrow{display:flex;align-items:baseline;gap:10px;padding:10px 14px;
+    border-top:1px solid var(--bark-2);cursor:pointer;
+    user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+  .favrow:first-child{border-top:none}
+  .favrow:active{background:var(--bark)}
+  .favrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-family:"Gowun Batang",serif;font-weight:700;font-size:15.5px;color:var(--amber-soft)}
+  .favrow .sn{font-size:11.5px;font-weight:600;color:var(--muted);
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  .favempty{background:var(--bark);border:1.5px dashed var(--line);border-radius:11px;
+    padding:20px 16px;text-align:center;font-size:12.5px;color:var(--muted);line-height:1.6}
+
   #toast{
     position:fixed;left:50%;bottom:98px;transform:translateX(-50%) translateY(20px);
     background:#16302f;color:#ffffff;padding:12px 20px;border-radius:24px;
@@ -469,6 +504,13 @@
 
   <!-- ===== STATS ===== -->
   <section id="v-stats" class="view">
+    <div class="st-sec">
+      <div class="st-head">
+        <h2>내 탐조 장소</h2>
+        <input type="date" class="favdate" id="fav-date" aria-label="기준 날짜">
+      </div>
+      <div id="fav-list"></div>
+    </div>
     <div class="phquota" id="st-photo"></div>
     <div class="stat-grid" id="st-sum"></div>
     <div class="st-sec">
@@ -495,6 +537,7 @@
         <div class="map-label" id="map-label" hidden>내 관찰 지도</div>
         <div class="map-msg" id="map-msg" hidden></div>
       </div>
+      <p class="map-hint">지도를 길게 누르면(PC는 우클릭) 그 지점의 일출·박명을 볼 수 있어요.</p>
     </div>
   </section>
 </main>
@@ -609,10 +652,15 @@ let isPremium=false;
 const FREE_PHOTO_SYNC_LIMIT=30;
 
 /* ============ IndexedDB ============ */
-const DB_NAME="deulsae", STORE="obs";
+/* v2 에서 favs(즐겨찾기 장소) 스토어 추가 — 이 기기 전용이라 서버로 올리지 않는다 */
+const DB_NAME="deulsae", DB_VER=2, STORE="obs", FAV_STORE="favs";
 let _db=null;
-function db(){return new Promise((res,rej)=>{if(_db)return res(_db);const r=indexedDB.open(DB_NAME,1);r.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains(STORE))d.createObjectStore(STORE,{keyPath:"id"});};r.onsuccess=e=>{_db=e.target.result;res(_db)};r.onerror=e=>rej(e.target.error);});}
+function db(){return new Promise((res,rej)=>{if(_db)return res(_db);const r=indexedDB.open(DB_NAME,DB_VER);r.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains(STORE))d.createObjectStore(STORE,{keyPath:"id"});if(!d.objectStoreNames.contains(FAV_STORE))d.createObjectStore(FAV_STORE,{keyPath:"id"});};r.onblocked=()=>{console.warn("다른 탭이 예전 버전의 저장소를 잡고 있어요");toast("다른 탭을 닫고 새로고침해 주세요");};r.onsuccess=e=>{_db=e.target.result;res(_db)};r.onerror=e=>rej(e.target.error);});}
 async function tx(m){return (await db()).transaction(STORE,m).objectStore(STORE);}
+async function favTx(m){return (await db()).transaction(FAV_STORE,m).objectStore(FAV_STORE);}
+async function rawFavs(){const s=await favTx("readonly");return new Promise((res,rej)=>{const r=s.getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error);});}
+async function putFav(f){const s=await favTx("readwrite");return new Promise((res,rej)=>{const r=s.put(f);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
+async function delFav(id){const s=await favTx("readwrite");return new Promise((res,rej)=>{const r=s.delete(id);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
 async function putObs(o){const s=await tx("readwrite");return new Promise((res,rej)=>{const r=s.put(o);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
 async function delObs(id){const s=await tx("readwrite");return new Promise((res,rej)=>{const r=s.delete(id);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
 async function rawGet(id){const s=await tx("readonly");return new Promise((res,rej)=>{const r=s.get(id);r.onsuccess=()=>res(r.result||null);r.onerror=()=>rej(r.error);});}
@@ -647,6 +695,21 @@ function parseTags(s){if(!s)return[];return [...new Set(s.split(/[\s,]+/).map(x=
 function fmtCoord(a,b){return a.toFixed(5)+", "+b.toFixed(5);}
 function pad(n){return String(n).padStart(2,"0");}
 function esc(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+function attr(s){return esc(s).replace(/"/g,"&quot;");}
+/* 길게 누르기(모바일) · 우클릭(PC) — 같은 동작을 두 번 부르지 않게 fired 로 잠근다 */
+function onLongPress(el,fn){
+  let timer=null, moved=false, fired=false;
+  const start=()=>{moved=false;fired=false;clearTimeout(timer);timer=setTimeout(()=>{if(!moved&&!fired){fired=true;fn();}},600);};
+  const cancel=()=>{clearTimeout(timer);timer=null;};
+  el.addEventListener("touchstart",start,{passive:true});
+  el.addEventListener("touchmove",()=>{moved=true;cancel();},{passive:true});
+  el.addEventListener("touchend",cancel);
+  el.addEventListener("touchcancel",cancel);
+  el.addEventListener("mousedown",start);
+  el.addEventListener("mouseup",cancel);
+  el.addEventListener("mouseleave",cancel);
+  el.addEventListener("contextmenu",e=>{e.preventDefault();cancel();if(!fired){fired=true;fn();}});
+}
 async function copyText(s){
   try{ if(navigator.clipboard&&window.isSecureContext){ await navigator.clipboard.writeText(s); return true; } }catch(e){}
   try{
@@ -657,7 +720,7 @@ async function copyText(s){
 
 /* ============ 일출·일몰 (SunCalc) ============ */
 function sunOK(){ return !window.__suncalcFailed && typeof SunCalc!=="undefined" && !!(SunCalc&&SunCalc.getTimes); }
-function hhmm(d){ return (d instanceof Date && !isNaN(d.getTime())) ? pad(d.getHours())+":"+pad(d.getMinutes()) : null; }
+function hhmm(d){ return (d && typeof d.getTime==="function" && !isNaN(d.getTime())) ? pad(d.getHours())+":"+pad(d.getMinutes()) : null; }
 /* dawn/dusk 는 시민박명(태양 고도 -6°). 고위도의 백야·극야에선 Invalid Date 라 그 항목만 빠진다. */
 const SUN_LABEL={dawn:"시민박명",sunrise:"일출",sunset:"일몰",dusk:"저녁박명"};
 const SUN_ALL=["dawn","sunrise","sunset","dusk"];
@@ -670,6 +733,13 @@ function sunTimesLine(lat,lng,when,keys){
   (keys||SUN_ALL).forEach(k=>{const v=hhmm(t[k]); if(v) parts.push(SUN_LABEL[k]+" "+v);});
   return parts.join(" · ");
 }
+/* 날짜 입력값(YYYY-MM-DD) → 그 날 정오. 정오로 잡아야 시간대 경계에서 하루가 밀리지 않는다. */
+function ymd(d){return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());}
+function dateFromInput(v){
+  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(v||"");
+  return m?new Date(+m[1],+m[2]-1,+m[3],12,0,0):null;
+}
+function tomorrowYMD(){const d=new Date();d.setDate(d.getDate()+1);return ymd(d);}
 
 /* ============ GPS + 지명 변환 ============ */
 let curPos=null, curPlace=null;
@@ -1705,6 +1775,108 @@ async function initSync(){
   if(sbUser) scheduleSync(400);
 }
 
+/* ============ 계획용 일출·박명 블록 + 즐겨찾기 장소 ============
+   즐겨찾기는 이 기기 전용(IndexedDB favs). 서버로 올리지 않는다. */
+let favCache=[];
+function favId(lat,lng){return lat.toFixed(5)+","+lng.toFixed(5);}
+function isFav(lat,lng){return Number.isFinite(lat)&&Number.isFinite(lng)&&favCache.some(f=>f.id===favId(lat,lng));}
+async function loadFavs(){
+  try{ favCache=await rawFavs(); }catch(e){ console.error("favs",e); favCache=[]; }
+  return favCache;
+}
+
+/* 팝업 안에 들어가는 "날짜 고르기 + 그 날 일출·박명 + ★" 블록 */
+function planBlockHTML(lat,lng,name){
+  const d=tomorrowYMD(), saved=isFav(lat,lng);
+  return `<div class="plan" data-lat="${lat}" data-lng="${lng}" data-name="${attr(name)}">`
+    +`<input class="plan-date" type="date" value="${d}" aria-label="기준 날짜">`
+    +`<span class="plan-sun">${esc(sunTimesLine(lat,lng,dateFromInput(d))||"이 날짜엔 계산할 수 없어요")}</span>`
+    +`<button class="plan-fav${saved?" on":""}" type="button">${saved?"★ 저장된 장소":"★ 즐겨찾기"}</button>`
+    +`</div>`;
+}
+/* 팝업이 열린 뒤에 붙인다 (Leaflet 이 내용을 그때 DOM 에 넣으므로) */
+function wirePlan(root){
+  if(!root) return;
+  root.querySelectorAll(".plan").forEach(box=>{
+    const lat=parseFloat(box.dataset.lat), lng=parseFloat(box.dataset.lng);
+    const inp=box.querySelector(".plan-date"), out=box.querySelector(".plan-sun");
+    if(inp&&out){
+      const paint=()=>{
+        const d=dateFromInput(inp.value);
+        out.textContent=d?(sunTimesLine(lat,lng,d)||"이 날짜엔 계산할 수 없어요"):"날짜를 골라 주세요";
+      };
+      inp.onchange=paint; inp.oninput=paint;
+    }
+    const btn=box.querySelector(".plan-fav");
+    if(btn) btn.onclick=()=>saveFavFrom(box,btn);
+  });
+}
+
+/* 기록 없는 지점 — 지도 빈 곳을 길게 누르거나 우클릭했을 때 */
+let spotPopup=null;
+function openSpotPopup(latlng){
+  const m=ensureMap();
+  if(!m||!latlng) return;
+  const ll=latlng.wrap?latlng.wrap():latlng;
+  const lat=Math.round(ll.lat*1e5)/1e5, lng=Math.round(ll.lng*1e5)/1e5;
+  const coord=fmtCoord(lat,lng);
+  const today=sunTimesLine(lat,lng,new Date(),["sunrise","sunset"]);
+  spotPopup=L.popup({maxWidth:260})
+    .setLatLng([lat,lng])
+    .setContent(`<div class="pop"><b>${esc(coord)}</b><span>기록 없는 지점</span>`
+      +(today?`<span>☀ 오늘 ${esc(today)}</span>`:"")
+      +planBlockHTML(lat,lng,coord)+`</div>`)
+    .openOn(m);
+  const target=spotPopup;
+  // 지명은 늦게 와도 제목과 즐겨찾기 이름만 갈아 끼운다
+  reverseGeocode(lat,lng).then(name=>{
+    if(!name||target!==spotPopup) return;
+    const el=target.getElement(); if(!el) return;
+    const t=el.querySelector(".pop b"); if(t) t.textContent=name;
+    const box=el.querySelector(".plan"); if(box) box.dataset.name=name;
+  }).catch(()=>{});
+}
+
+async function saveFavFrom(box,btn){
+  const lat=parseFloat(box.dataset.lat), lng=parseFloat(box.dataset.lng);
+  if(!Number.isFinite(lat)||!Number.isFinite(lng)) return;
+  const id=favId(lat,lng);
+  if(favCache.some(f=>f.id===id)){ toast("이미 즐겨찾기에 있어요"); return; }
+  const name=(box.dataset.name||"").trim()||fmtCoord(lat,lng);
+  try{ await putFav({id,name,lat,lng,created:Date.now()}); }
+  catch(e){ toast("즐겨찾기 저장 실패"); console.error(e); return; }
+  await loadFavs();
+  if(btn){ btn.classList.add("on"); btn.textContent="★ 저장된 장소"; }
+  renderFavs();
+  toast("탐조 장소로 담았어요 · "+name);
+}
+async function removeFav(id){
+  const f=favCache.find(x=>x.id===id);
+  if(!f) return;
+  if(!confirm("‘"+f.name+"’ 을(를) 즐겨찾기에서 지울까요?")) return;
+  try{ await delFav(id); }catch(e){ toast("삭제 실패"); console.error(e); return; }
+  await loadFavs();
+  renderFavs();
+  toast("즐겨찾기에서 지웠어요");
+}
+/* 통계 탭 맨 위 카드 — 날짜 하나로 전체 갱신, 항목 길게 누르면 삭제 */
+function renderFavs(){
+  const wrap=$("#fav-list"); if(!wrap) return;
+  const inp=$("#fav-date");
+  if(inp&&!inp.value) inp.value=tomorrowYMD();
+  const when=dateFromInput(inp?inp.value:"")||dateFromInput(tomorrowYMD());
+  const favs=favCache.slice().sort((a,b)=>(b.created||0)-(a.created||0));
+  if(!favs.length){
+    wrap.innerHTML=`<div class="favempty">지도에서 핀을 누르거나 빈 곳을 길게 눌러 ★ 를 담아 보세요.<br>고른 날짜의 일출·시민박명을 여기서 한눈에 볼 수 있어요.</div>`;
+    return;
+  }
+  wrap.innerHTML=`<div class="favlist">${favs.map(f=>{
+    const line=sunTimesLine(f.lat,f.lng,when,["dawn","sunrise"]);
+    return `<div class="favrow" data-id="${attr(f.id)}" title="길게 누르면 삭제"><span class="nm">${esc(f.name)}</span><span class="sn">${esc(line||"—")}</span></div>`;
+  }).join("")}</div>`;
+  wrap.querySelectorAll(".favrow").forEach(r=>onLongPress(r,()=>removeFav(r.dataset.id)));
+}
+
 /* ============ 관찰 지도 ============
    ⚠ 이 지도는 본인 전용(내 기기에서 내 기록만 보는 화면)입니다.
       남에게 나가는 공유·내보내기 경로 — 이미지 카드, SNS 공유, 외부 공개 링크 —
@@ -1783,6 +1955,8 @@ function ensureMap(){
   }).addTo(blMap);
   blPins=L.layerGroup().addTo(blMap);
   blPinIcon=L.divIcon({className:"bl-pin",html:"<i></i>",iconSize:[15,15],iconAnchor:[7.5,7.5],popupAnchor:[0,-9]});
+  blMap.on("popupopen",e=>wirePlan(e.popup.getElement()));
+  blMap.on("contextmenu",e=>openSpotPopup(e.latlng));   // PC 우클릭 · 모바일 길게 누르기
   return blMap;
 }
 
@@ -1796,6 +1970,7 @@ function pinPopup(o){
     +(o.place?`<span>${esc(o.place)}</span>`:"")
     +(o.count!=null?`<span>${o.count}개체</span>`:"")
     +(sun?`<span>☀ 오늘 ${esc(sun)}</span>`:"")
+    +planBlockHTML(o.lat,o.lng,o.place||fmtCoord(o.lat,o.lng))
     +`</div>`;
 }
 
@@ -1838,6 +2013,7 @@ let lifeSort="first", lifeRows=[];
 function canViewStats(){ return true; }   // 프리미엄 잠금 진입점 — 지금은 누구나 볼 수 있음
 async function renderStats(obsIn){
   if(!canViewStats()) return;
+  renderFavs();
   const obs=obsIn||await allObs();
   const now=new Date(), yr=String(now.getFullYear());
   const num=v=>v.toLocaleString("ko-KR");
@@ -1920,6 +2096,7 @@ async function showTab(v){
   if(v==="stats"){ await renderStats(); refreshMapSize(); }
 }
 document.querySelectorAll("nav button").forEach(btn=>btn.onclick=()=>showTab(btn.dataset.v));
+$("#fav-date").onchange=renderFavs;
 $("#search").oninput=()=>renderList();
 $("#sort").onchange=()=>renderList();
 
@@ -1928,7 +2105,7 @@ $("#sort").onchange=()=>renderList();
 function inMap(e){ return !!(e.target&&e.target.closest&&e.target.closest("#st-map")); }
 document.addEventListener("gesturestart",e=>{if(!inMap(e))e.preventDefault();});
 document.addEventListener("gesturechange",e=>{if(!inMap(e))e.preventDefault();});
-(async function(){fillNow();await refreshSpeciesList();await renderAll();grabGPS();initSync();})();
+(async function(){fillNow();$("#fav-date").value=tomorrowYMD();await loadFavs();await refreshSpeciesList();await renderAll();grabGPS();initSync();})();
 </script>
 </body>
 </html>
