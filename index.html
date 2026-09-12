@@ -215,6 +215,36 @@
     padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;
     box-shadow:0 1px 4px rgba(0,0,0,.3);
   }
+  .card .photos img{cursor:pointer}
+  .card .photos .phsync{
+    position:absolute;left:-6px;bottom:-6px;width:22px;height:22px;border-radius:50%;
+    border:2px solid #fff;background:#b9c6c6;color:#fff;font-size:11px;line-height:1;
+    padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;
+    box-shadow:0 1px 4px rgba(0,0,0,.25);
+  }
+  .card .photos .phsync.on{background:var(--amber)}
+  .card .photos .ph.ghost{
+    width:62px;height:62px;border-radius:8px;border:1px dashed var(--line);
+    background:var(--bark);display:flex;align-items:center;justify-content:center;text-align:center;
+  }
+  .card .photos .ph.ghost i{font-style:normal;font-size:9.5px;font-weight:600;line-height:1.35;color:var(--muted-d)}
+
+  /* 사진 크게 보기 — 압축본(원본)을 쓰는 유일한 화면 중 하나 */
+  .lb{position:fixed;inset:0;z-index:70;background:rgba(10,22,21,.93);
+    display:flex;align-items:center;justify-content:center;padding:18px}
+  .lb img{max-width:100%;max-height:100%;border-radius:10px;display:block}
+  .lb button{position:absolute;top:max(12px,env(safe-area-inset-top));right:14px;
+    width:38px;height:38px;border-radius:50%;border:none;background:rgba(255,255,255,.9);
+    color:#13201f;font-size:16px;font-family:inherit;cursor:pointer}
+
+  /* 동기화 사진 사용량 */
+  .phquota{display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:10px 13px;
+    background:#f0fbfb;border:1.5px solid #b7dcdd;border-radius:11px;
+    font-size:12.5px;font-weight:600;color:var(--amber-d)}
+  .phquota b{margin-left:auto;font-size:14px;font-variant-numeric:tabular-nums}
+  .phquota small{font-weight:500;color:var(--muted)}
+  .phquota.full{background:#fdf3ea;border-color:#f0d9c2;color:#a4602f}
+
   .card .actions{display:flex;gap:8px;margin-top:11px;border-top:1px dashed var(--line);padding-top:11px}
   .card .actions button{
     background:none;border:1px solid var(--line);border-radius:8px;
@@ -436,6 +466,7 @@
 
   <!-- ===== STATS ===== -->
   <section id="v-stats" class="view">
+    <div class="phquota" id="st-photo"></div>
     <div class="stat-grid" id="st-sum"></div>
     <div class="st-sec">
       <div class="st-head"><h2>월별 관찰</h2><small>최근 12개월 · 기록 수</small></div>
@@ -472,6 +503,11 @@
 </nav>
 
 <div id="toast"></div>
+
+<div id="lightbox" class="lb" style="display:none">
+  <img id="lb-img" alt="사진 크게 보기">
+  <button id="lb-close" aria-label="닫기">✕</button>
+</div>
 
 <div id="editor" class="cm-overlay" style="display:none">
   <div class="cm-sheet">
@@ -553,7 +589,7 @@
         <p class="auth-desc" id="auth-detail"></p>
         <button id="auth-sync" class="cm-save">지금 동기화</button>
         <button id="auth-signout" class="auth-signout">로그아웃</button>
-        <p class="cm-hint">로그아웃해도 이 기기의 기록은 지워지지 않아요. 사진은 아직 기기에만 저장돼요.</p>
+        <p class="cm-hint">로그아웃해도 이 기기의 기록은 지워지지 않아요. 사진은 기본적으로 이 기기에만 저장되고, 목록에서 ☁ 를 켠 사진만 올라가요.</p>
       </div>
     </div>
   </div>
@@ -566,6 +602,8 @@
 /* ============ 프리미엄 (준비만 — 아직 잠그는 기능 없음) ============ */
 const PREMIUM_ENABLED=false;
 let isPremium=false;
+/* 무료 사용자가 서버에 올릴 수 있는 사진 수 (로컬 저장은 제한 없음) */
+const FREE_PHOTO_SYNC_LIMIT=30;
 
 /* ============ IndexedDB ============ */
 const DB_NAME="deulsae", STORE="obs";
@@ -576,15 +614,22 @@ async function putObs(o){const s=await tx("readwrite");return new Promise((res,r
 async function delObs(id){const s=await tx("readwrite");return new Promise((res,rej)=>{const r=s.delete(id);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
 async function rawGet(id){const s=await tx("readonly");return new Promise((res,rej)=>{const r=s.get(id);r.onsuccess=()=>res(r.result||null);r.onerror=()=>rej(r.error);});}
 async function rawAll(){const s=await tx("readonly");return new Promise((res,rej)=>{const r=s.getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error);});}
-/* 예전 기록의 photos(Blob 배열)를 {id,blob,path,uploaded} 배열로 올려붙임 */
+/* 예전 기록의 photos 를 {id,blob,thumb,path,thumbPath,uploaded,sync} 로 올려붙임.
+   sync 는 "서버에 두겠다"는 사용자 의사, uploaded 는 "실제로 올라가 있다"는 상태.
+   이미 올라가 있던 사진은 동기화 켜진 상태로 유지한다. */
 function normPhotos(o){
   if(!Array.isArray(o.photos)){o.photos=[];return true;}
   const before=o.photos.length;
   let changed=false;
   o.photos=o.photos.map(p=>{
-    if(p instanceof Blob){changed=true;return {id:uid(),blob:p,path:null,uploaded:false};}
+    if(p instanceof Blob){changed=true;return {id:uid(),blob:p,thumb:null,path:null,thumbPath:null,uploaded:false,sync:false};}
+    if(!p||typeof p!=="object") return p;
+    if(!p.id){p.id=p.path?pathPhId(p.path):uid();changed=true;}
+    if(p.sync===undefined){p.sync=!!p.uploaded;changed=true;}
+    if(p.thumb===undefined){p.thumb=null;changed=true;}
+    if(p.thumbPath===undefined){p.thumbPath=null;changed=true;}   // 서버에 썸네일을 올린 뒤에만 채운다
     return p;
-  }).filter(p=>p&&(p.blob instanceof Blob||p.path));
+  }).filter(p=>p&&typeof p==="object"&&(p.id||p.path));
   return changed||o.photos.length!==before;
 }
 async function getObs(id){const o=await rawGet(id);if(o&&normPhotos(o))await putObs(o);return o;}
@@ -731,12 +776,13 @@ async function renderList(obsIn){
       ${o.lat!=null?`<div class="geo"><span class="coord">${o.lat.toFixed(5)}, ${o.lng.toFixed(5)}</span><button class="cpgeo" data-lat="${o.lat}" data-lng="${o.lng}">좌표 복사</button><a class="mapgeo" href="https://www.google.com/maps/search/?api=1&query=${o.lat},${o.lng}" target="_blank" rel="noopener">구글맵</a></div>`:""}
       ${o.memo?`<div class="memo">${esc(o.memo)}</div>`:""}
       ${tags?`<div class="tags">${tags}</div>`:""}
-      <div class="photos">${o.photos.map((p,i)=>`<span class="ph"><img data-ph="${i}" alt="사진"><button class="phdel" data-id="${o.id}" data-phid="${p.id}" aria-label="사진 삭제">✕</button></span>`).join("")}</div>
+      <div class="photos">${o.photos.map((p,i)=>phCellHTML(o,p,i)).join("")}</div>
       <div class="actions"><button class="edit" data-id="${o.id}">수정</button><button class="addph" data-id="${o.id}">＋ 사진</button><button class="mkcard" data-id="${o.id}">카드 만들기</button><button class="del" data-id="${o.id}">삭제</button></div>
     </div>`;
   }).join("");
-  rows.forEach(o=>{const card=wrap.querySelector(`.card[data-id="${o.id}"]`);if(!card)return;card.querySelectorAll("img[data-ph]").forEach(img=>{const p=o.photos[+img.dataset.ph];if(!p)return;if(p.blob instanceof Blob)img.src=URL.createObjectURL(p.blob);else if(p.path){img.src=BLANK_PX;img.classList.add("ph-load");fetchPhoto(o.id,p,img);}});});
-  wrap.querySelectorAll(".phdel").forEach(b=>b.onclick=async ev=>{ev.stopPropagation();if(!confirm("이 사진을 삭제할까요?"))return;const o=await getObs(b.dataset.id);if(!o)return;const i=(o.photos||[]).findIndex(p=>p.id===b.dataset.phid);if(i<0)return;const p=o.photos.splice(i,1)[0];await saveObs(o);if(p&&p.path)queuePhotoRemove(p.path);await renderAll();toast("사진 삭제됨");});
+  rows.forEach(o=>{const card=wrap.querySelector(`.card[data-id="${o.id}"]`);if(!card)return;paintPhotos(o,card);});
+  wrap.querySelectorAll(".phsync").forEach(b=>b.onclick=ev=>{ev.stopPropagation();togglePhotoSync(b.dataset.id,b.dataset.phid);});
+  wrap.querySelectorAll(".phdel").forEach(b=>b.onclick=async ev=>{ev.stopPropagation();if(!confirm("이 사진을 삭제할까요?"))return;const o=await getObs(b.dataset.id);if(!o)return;const i=(o.photos||[]).findIndex(p=>p.id===b.dataset.phid);if(i<0)return;const p=o.photos.splice(i,1)[0];await saveObs(o);queuePhotoPaths(p);await renderAll();toast("사진 삭제됨");});
   wrap.querySelectorAll(".edit").forEach(b=>b.onclick=()=>openEditor(b.dataset.id));
   wrap.querySelectorAll(".addph").forEach(b=>b.onclick=()=>startAddPhoto(b.dataset.id));
   wrap.querySelectorAll(".cpgeo").forEach(b=>b.onclick=async()=>{
@@ -789,8 +835,10 @@ $("#ed-save").onclick=async()=>{
   }catch(e){ toast("수정 저장 실패"); console.error(e); }
 };
 
-/* ============ 사진 압축 (긴 변 1200px · JPEG 0.75 · EXIF 방향 보정) ============ */
-const PH_MAX=1200, PH_Q=0.75;
+/* ============ 사진 압축 (긴 변 1000px · JPEG 0.7 · EXIF 방향 보정) ============ */
+const PH_MAX=1000, PH_Q=0.7;
+/* 목록·통계·지도에서 쓰는 썸네일 (긴 변 240px · JPEG 0.6) */
+const TH_MAX=240, TH_Q=0.6;
 const BLANK_PX="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
 
 function exifOrientation(v,tiff){
@@ -880,6 +928,39 @@ async function compressPhoto(file){
   finally{ if(src&&src.close) src.close(); }
 }
 
+/* 압축본에서 썸네일을 만든다. 압축본은 이미 방향이 반영돼 있어 크기만 줄이면 된다. */
+async function makeThumb(blob){
+  if(!(blob instanceof Blob)||!/^image\//.test(blob.type||"")) return null;
+  let src=null;
+  try{
+    src=await decodeImage(blob);
+    const sw=src.naturalWidth||src.width, sh=src.naturalHeight||src.height;
+    if(!sw||!sh) return null;
+    const s=Math.min(1,TH_MAX/Math.max(sw,sh));
+    const cv=document.createElement("canvas");
+    cv.width=Math.max(1,Math.round(sw*s)); cv.height=Math.max(1,Math.round(sh*s));
+    const ctx=cv.getContext("2d");
+    ctx.imageSmoothingQuality="high";
+    ctx.drawImage(src,0,0,cv.width,cv.height);
+    return await new Promise(r=>cv.toBlob(r,"image/jpeg",TH_Q));
+  }catch(e){ console.error("thumb",e); return null; }
+  finally{ if(src&&src.close) src.close(); }
+}
+/* 예전 사진(썸네일 없이 저장된 것)은 처음 그릴 때 한 번 만들어 둔다 */
+async function ensureThumbs(o){
+  const todo=(o.photos||[]).filter(p=>!(p.thumb instanceof Blob)&&p.blob instanceof Blob);
+  if(!todo.length) return;
+  for(const p of todo) p.thumb=await makeThumb(p.blob);
+  const cur=await getObs(o.id);
+  if(!cur) return;
+  let hit=false;
+  (cur.photos||[]).forEach(cp=>{
+    const t=todo.find(p=>p.id===cp.id);
+    if(t&&t.thumb instanceof Blob&&!(cp.thumb instanceof Blob)){cp.thumb=t.thumb;hit=true;}
+  });
+  if(hit) await putObs(cur);   // 서버에 올릴 내용이 아니라 dirty 표시는 하지 않는다
+}
+
 /* ============ photos ============ */
 let photoTargetId=null;function startAddPhoto(id){photoTargetId=id;$("#photofile").value="";$("#photofile").click();}
 $("#photofile").onchange=async e=>{
@@ -889,12 +970,87 @@ $("#photofile").onchange=async e=>{
   if(!o)return;
   if(files.length>1) toast(files.length+"장 준비 중…");
   const items=[];
-  for(const f of files){ items.push({id:uid(),blob:await compressPhoto(f),path:null,uploaded:false}); }
+  for(const f of files){
+    const blob=await compressPhoto(f);
+    items.push({id:uid(),blob,thumb:await makeThumb(blob),path:null,thumbPath:null,uploaded:false,sync:false});
+  }
   o.photos=(o.photos||[]).concat(items);
   await saveObs(o);
   await renderAll();
   toast(files.length+"장 추가됨");
 };
+
+/* 사진 한 칸. 이 기기에 파일도 없고 서버 경로도 없는 사진 = 다른 기기에만 있는 사진 */
+function phCellHTML(o,p,i){
+  const local=(p.blob instanceof Blob)||(p.thumb instanceof Blob);
+  if(!local&&!p.path) return `<span class="ph ghost" title="이 기기에만 있음"><i>이 기기에만<br>있음</i></span>`;
+  const on=!!p.sync;
+  const tip=on?"동기화 켜짐 · 다른 기기에서도 보여요":"동기화 꺼짐 · 이 기기에만 있어요";
+  const sync=sbUser?`<button class="phsync${on?" on":""}" data-id="${o.id}" data-phid="${p.id}" title="${tip}" aria-label="사진 동기화">☁</button>`:"";
+  return `<span class="ph"><img data-ph="${i}" alt="사진">${sync}<button class="phdel" data-id="${o.id}" data-phid="${p.id}" aria-label="사진 삭제">✕</button></span>`;
+}
+/* 목록에는 썸네일만 쓴다. 압축본은 카드 만들기와 사진 크게 보기에서만 연다. */
+async function paintPhotos(o,card){
+  const imgs=[...card.querySelectorAll("img[data-ph]")];
+  if(!imgs.length) return;
+  imgs.forEach(img=>{ img.onclick=()=>openLightbox(o.id,+img.dataset.ph); });
+  await ensureThumbs(o);
+  for(const img of imgs){
+    const p=o.photos[+img.dataset.ph];
+    if(!p||!img.isConnected) continue;
+    if(p.thumb instanceof Blob){ img.src=URL.createObjectURL(p.thumb); img.classList.remove("ph-load"); }
+    else if(p.path||p.thumbPath){ img.src=BLANK_PX; img.classList.add("ph-load"); fetchThumb(o.id,p,img); }
+  }
+}
+
+/* ☁ 토글 — 켜면 이 사진만 서버로, 끄면 서버에서 지운다 */
+async function togglePhotoSync(obsId,phId){
+  if(!sbUser){ toast("로그인하면 사진을 동기화할 수 있어요"); return; }
+  const o=await getObs(obsId); if(!o) return;
+  const p=(o.photos||[]).find(x=>x.id===phId); if(!p) return;
+  if(!p.sync){
+    if(!isPremium){
+      const n=await syncedPhotoCount();
+      if(n>=FREE_PHOTO_SYNC_LIMIT){ toast("무료는 "+FREE_PHOTO_SYNC_LIMIT+"장까지 동기화돼요"); return; }
+    }
+    if(!(p.thumb instanceof Blob)&&p.blob instanceof Blob) p.thumb=await makeThumb(p.blob);
+    p.sync=true;
+    await saveObs(o);
+    toast(navigator.onLine?"동기화 켬 · 곧 올라가요":"동기화 켬 · 연결되면 올라가요");
+  }else{
+    if(!(p.blob instanceof Blob)){            // 서버에만 있던 사진은 먼저 받아 둬야 안 잃는다
+      await fetchPhoto(obsId,p,null);
+      if(!(p.blob instanceof Blob)){ toast("사진을 먼저 내려받아야 해요 · 연결을 확인해 주세요"); return; }
+    }
+    if(!(p.thumb instanceof Blob)) p.thumb=await makeThumb(p.blob);
+    queuePhotoPaths(p);
+    p.sync=false; p.uploaded=false; p.path=null; p.thumbPath=null;
+    await saveObs(o);
+    toast("동기화 끔 · 이 기기에만 남아요");
+  }
+  await renderAll();
+}
+
+/* ============ 사진 크게 보기 (압축본) ============ */
+function closeLightbox(){
+  const im=$("#lb-img");
+  $("#lightbox").style.display="none";
+  if(im._u){ URL.revokeObjectURL(im._u); im._u=null; }
+  im.removeAttribute("src");
+}
+async function openLightbox(obsId,idx){
+  const o=await getObs(obsId); if(!o) return;
+  const p=(o.photos||[])[idx]; if(!p) return;
+  const box=$("#lightbox"), im=$("#lb-img");
+  im.removeAttribute("src"); box.style.display="flex";
+  if(!(p.blob instanceof Blob)&&p.path) await fetchPhoto(obsId,p,null);
+  const b=(p.blob instanceof Blob)?p.blob:((p.thumb instanceof Blob)?p.thumb:null);
+  if(!b){ closeLightbox(); toast("사진을 불러오지 못했어요"); return; }
+  if(im._u) URL.revokeObjectURL(im._u);
+  im._u=URL.createObjectURL(b); im.src=im._u;
+}
+$("#lb-close").onclick=closeLightbox;
+$("#lightbox").onclick=e=>{ if(e.target.id!=="lb-img") closeLightbox(); };
 
 /* ============ 공유 카드 메이커 ============ */
 const WM_SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="2 9 52 52"><ellipse cx="34" cy="39" rx="12" ry="15" fill="#0f9aa3"/><ellipse cx="29" cy="43" rx="6.5" ry="9" fill="#ef9156"/><circle cx="30" cy="23" r="12" fill="#0f9aa3"/><path d="M18 23 a12 12 0 0 1 24 0 Z" fill="#0b7d85"/><path d="M18 23 L2 26 L18 28 Z" fill="#e8824a"/><circle cx="24" cy="30" r="3.2" fill="#fff"/><circle cx="29" cy="26" r="2.8" fill="#0d2b29"/></svg>';
@@ -1130,9 +1286,9 @@ $("#importfile").onchange=async e=>{
     for(const rec of arr){
       const photos=[];
       for(const p of (rec.photos||[])){
-        if(typeof p==="string"&&p.startsWith("data:"))photos.push({id:uid(),blob:dataURLtoBlob(p),path:null,uploaded:false});
-        else if(p instanceof Blob)photos.push({id:uid(),blob:p,path:null,uploaded:false});
-        else if(p&&typeof p==="object"&&p.blob instanceof Blob)photos.push({id:p.id||uid(),blob:p.blob,path:null,uploaded:false});
+        if(typeof p==="string"&&p.startsWith("data:"))photos.push({id:uid(),blob:dataURLtoBlob(p),thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});
+        else if(p instanceof Blob)photos.push({id:uid(),blob:p,thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});
+        else if(p&&typeof p==="object"&&p.blob instanceof Blob)photos.push({id:p.id||uid(),blob:p.blob,thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});
       }
       await saveObs({...rec,photos,tags:Array.isArray(rec.tags)?rec.tags:[],id:rec.id||uid()});
       n++;
@@ -1161,8 +1317,8 @@ async function saveObs(o){await putObs(touch(o));scheduleSync();}
 async function removeObs(id){
   const o=await getObs(id);
   if(!o) return;
-  if(o.remote){(o.photos||[]).forEach(p=>{if(p.path)queuePhotoRemove(p.path);});o.deleted=true;o.photos=[];await putObs(touch(o));scheduleSync();}
-  else {(o.photos||[]).forEach(p=>{if(p.path)queuePhotoRemove(p.path);});await delObs(id);}
+  if(o.remote){(o.photos||[]).forEach(queuePhotoPaths);o.deleted=true;o.photos=[];await putObs(touch(o));scheduleSync();}
+  else {(o.photos||[]).forEach(queuePhotoPaths);await delObs(id);}
 }
 
 /* --- 헤더 표시 --- */
@@ -1175,7 +1331,7 @@ async function pendingCount(){   // 아직 못 올린 기록 + 사진
   let n=0;
   for(const o of await allRows()){
     if(o.dirty) n++;
-    if(!o.deleted) n+=(o.photos||[]).filter(p=>!p.uploaded&&p.blob instanceof Blob).length;
+    if(!o.deleted) n+=(o.photos||[]).filter(p=>p.sync&&!p.uploaded&&p.blob instanceof Blob).length;
   }
   return n;
 }
@@ -1195,7 +1351,7 @@ function toRemote(o){
     date:o.date||null,time:o.time||null,
     lat:o.lat??null,lng:o.lng??null,acc:o.acc??null,place:o.place??null,
     count:o.count??null,tags:Array.isArray(o.tags)?o.tags:[],memo:o.memo||"",
-    photos:(o.photos||[]).filter(p=>p.uploaded&&p.path).map(p=>p.path),
+    photos:(o.photos||[]).map(p=>(p.uploaded&&p.path)?p.path:LOCAL_MARK+p.id),
     created:o.created||Date.now(),updated_at:o.updated_at||new Date().toISOString()};
 }
 function fromRemote(r,local){
@@ -1207,15 +1363,32 @@ function fromRemote(r,local){
     updated_at:r.updated_at||new Date().toISOString(),dirty:false,deleted:false,remote:true};
 }
 function stamp(v){const t=Date.parse(v||"");return isNaN(t)?0:t;}
-/* 서버 경로 목록 + 로컬 사진 합치기 — 받아 둔 blob 은 그대로 재사용 */
-function mergePhotos(paths,local){
-  const cur=(local&&local.photos)||[], byPath={};
-  cur.forEach(p=>{if(p.path)byPath[p.path]=p;});
-  const out=(paths||[]).map(path=>{
-    const ex=byPath[path];
-    return ex?{...ex,path,uploaded:true}:{id:pathPhId(path),blob:null,path,uploaded:true};
+/* 서버 목록 + 로컬 사진 합치기 — 받아 둔 blob/thumb 은 그대로 재사용.
+   local: 표식은 "다른 기기에만 있는 사진" — 이 기기엔 파일이 없으니 자리표시자로 남는다. */
+function mergePhotos(entries,local){
+  const cur=(local&&local.photos)||[], byId={}, byPath={};
+  cur.forEach(p=>{if(p.id)byId[p.id]=p;if(p.path)byPath[p.path]=p;});
+  const seen=new Set(), out=[];
+  (entries||[]).forEach(entry=>{
+    if(typeof entry!=="string"||!entry) return;
+    if(entry.indexOf(LOCAL_MARK)===0){
+      const id=entry.slice(LOCAL_MARK.length);
+      if(!id||seen.has(id)) return;
+      seen.add(id);
+      const ex=byId[id];
+      out.push(ex?{...ex,sync:false,uploaded:false,path:null,thumbPath:null}
+                 :{id,blob:null,thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});
+      return;
+    }
+    const ex=byPath[entry], id=(ex&&ex.id)||pathPhId(entry);
+    if(seen.has(id)) return;
+    seen.add(id);
+    const base=ex||byId[id];
+    out.push(base?{...base,id,path:entry,thumbPath:base.thumbPath||thumbOf(entry),uploaded:true,sync:true}
+                 :{id,blob:null,thumb:null,path:entry,thumbPath:thumbOf(entry),uploaded:true,sync:true});
   });
-  cur.forEach(p=>{if(!p.path&&p.blob instanceof Blob)out.push(p);});   // 아직 못 올린 사진은 유지
+  // 아직 서버에 알리지 못한 이 기기의 사진은 그대로 유지
+  cur.forEach(p=>{if(!seen.has(p.id)&&(p.blob instanceof Blob||p.thumb instanceof Blob))out.push(p);});
   return out;
 }
 
@@ -1279,9 +1452,24 @@ async function pushLocal(){
 
 /* --- 사진 Storage --- */
 const PH_BUCKET="photos";
+const LOCAL_MARK="local:";          // 서버 photos 목록에서 "이 기기에만 있는 사진" 표식
 const phFetching=new Set();
 function phPath(obsId,phId){return sbUser.id+"/"+obsId+"/"+phId+".jpg";}
+function thumbOf(path){if(!path)return null;const i=path.lastIndexOf(".");return i>0?path.slice(0,i)+"_t"+path.slice(i):path+"_t";}
 function pathPhId(path){return (path.split("/").pop()||uid()).replace(/\.[^.]+$/,"");}
+/* 사진 하나가 서버에 남긴 파일(압축본 + 썸네일)을 모두 지움 목록에 넣는다 */
+function queuePhotoPaths(p){
+  if(!p||!p.path) return;
+  queuePhotoRemove(p.path);
+  queuePhotoRemove(p.thumbPath||thumbOf(p.path));
+}
+/* 동기화 켜 둔 사진 수 — 무료 한도 계산용 */
+async function syncedPhotoCount(rows){
+  const list=rows||await allRows();
+  let n=0;
+  for(const o of list){ if(o.deleted) continue; n+=(o.photos||[]).filter(p=>p&&p.sync).length; }
+  return n;
+}
 
 /* 삭제된 사진은 목록에 쌓아 두고 다음 동기화 때 서버에서 지움 */
 function removalQueue(){try{return JSON.parse(localStorage.getItem("bl_ph_removed")||"[]");}catch(e){return [];}}
@@ -1299,25 +1487,45 @@ async function flushPhotoRemovals(){
   localStorage.setItem("bl_ph_removed","[]");
 }
 
-/* 아직 안 올린 사진 업로드 → path 를 기록에 반영하고 dirty 로 표시 */
+/* 동기화를 켠 사진만 올린다 (압축본 + 썸네일) → 경로를 기록에 반영하고 dirty 로 표시 */
+function phIsMine(p){ return !!p.path&&p.path.indexOf(sbUser.id+"/")===0; }
 async function uploadPhotos(){
   for(const o of await allRows()){
     if(o.deleted) continue;
-    // 계정이 바뀌면 남의 경로에 있던 사진도 내 경로로 다시 올림
-    const todo=(o.photos||[]).filter(p=>p.blob instanceof Blob&&(!p.uploaded||!p.path||p.path.indexOf(sbUser.id+"/")!==0));
+    // 계정이 바뀌면 남의 경로에 있던 사진도 내 경로로 다시 올림. 썸네일만 빠진 예전 사진도 채운다.
+    const todo=(o.photos||[]).filter(p=>p.sync&&(p.blob instanceof Blob)&&(!p.uploaded||!phIsMine(p)||!p.thumbPath));
     if(!todo.length) continue;
     const done={};
     for(const p of todo){
-      const path=phPath(o.id,p.id);
-      const {error}=await sbClient().storage.from(PH_BUCKET)
-        .upload(path,p.blob,{contentType:p.blob.type||"image/jpeg",upsert:true});
-      if(error){console.error("photo upload",error);continue;}   // 실패는 다음 동기화에 재시도
-      done[p.id]=path;
+      const path=phPath(o.id,p.id), tpath=thumbOf(path);
+      const rec={};
+      if(!p.uploaded||!phIsMine(p)){
+        const {error}=await sbClient().storage.from(PH_BUCKET)
+          .upload(path,p.blob,{contentType:p.blob.type||"image/jpeg",upsert:true});
+        if(error){console.error("photo upload",error);continue;}   // 실패는 다음 동기화에 재시도
+        rec.path=path;
+      }
+      const thumb=(p.thumb instanceof Blob)?p.thumb:await makeThumb(p.blob);
+      if(thumb){
+        const {error}=await sbClient().storage.from(PH_BUCKET)
+          .upload(tpath,thumb,{contentType:"image/jpeg",upsert:true});
+        if(error) console.error("thumb upload",error);
+        else { rec.thumbPath=tpath; rec.thumb=thumb; }
+      }
+      if(Object.keys(rec).length) done[p.id]=rec;
     }
     if(!Object.keys(done).length) continue;
     const cur=await getObs(o.id);
     if(!cur) continue;
-    cur.photos=(cur.photos||[]).map(p=>done[p.id]?{...p,path:done[p.id],uploaded:true}:p);
+    cur.photos=(cur.photos||[]).map(p=>{
+      const d=done[p.id];
+      if(!d) return p;
+      const n={...p};
+      if(d.path){n.path=d.path;n.uploaded=true;}
+      if(d.thumbPath) n.thumbPath=d.thumbPath;
+      if(d.thumb&&!(n.thumb instanceof Blob)) n.thumb=d.thumb;
+      return n;
+    });
     await putObs(touch(cur));
   }
 }
@@ -1340,6 +1548,47 @@ async function fetchPhoto(obsId,ph,img){
     }
     if(img&&img.isConnected){img.src=URL.createObjectURL(data);img.classList.remove("ph-load");}
   }catch(e){ console.error("photo download",e); }
+  finally{ phFetching.delete(key); }
+}
+
+/* 목록·통계·지도에 쓸 썸네일만 받아 온다. 예전 사진처럼 서버에 썸네일이 없으면
+   한 번만 압축본을 받아 썸네일을 만들고, 다음 동기화 때 올리도록 thumbPath 를 비워 둔다. */
+async function fetchThumb(obsId,ph,img){
+  if(!ph||ph.thumb instanceof Blob) return;
+  const tpath=ph.thumbPath||(ph.path?thumbOf(ph.path):null);
+  if(!tpath&&!ph.path) return;
+  if(!sbClient()||!sbUser||!navigator.onLine) return;
+  const key=obsId+"|t|"+ph.id;
+  if(phFetching.has(key)) return;
+  phFetching.add(key);
+  let madeLocally=false;
+  try{
+    let blob=null;
+    if(tpath){
+      const {data,error}=await sbClient().storage.from(PH_BUCKET).download(tpath);
+      if(!error&&data) blob=data;
+    }
+    if(!blob&&ph.path){
+      const {data,error}=await sbClient().storage.from(PH_BUCKET).download(ph.path);
+      if(error||!data) throw error||new Error("빈 응답");
+      ph.blob=data;
+      blob=await makeThumb(data);
+      madeLocally=true;
+    }
+    if(!blob) return;
+    ph.thumb=blob;
+    const cur=await getObs(obsId);
+    if(cur){
+      const t=(cur.photos||[]).find(p=>p.id===ph.id);
+      if(t){
+        if(!(t.thumb instanceof Blob)) t.thumb=blob;
+        if(ph.blob instanceof Blob&&!(t.blob instanceof Blob)) t.blob=ph.blob;
+        if(madeLocally) t.thumbPath=null;
+        await putObs(cur);
+      }
+    }
+    if(img&&img.isConnected){img.src=URL.createObjectURL(blob);img.classList.remove("ph-load");}
+  }catch(e){ console.error("thumb download",e); }
   finally{ phFetching.delete(key); }
 }
 
@@ -1581,6 +1830,9 @@ async function renderStats(obsIn){
   $("#st-sum").innerHTML=[["총 종수",sp.size],["총 기록",obs.length],["올해 종수",yrSp.size],["올해 기록",yrN]]
     .map(([l,v])=>`<div class="stat"><b>${num(v)}</b><span>${l}</span></div>`).join("");
 
+  // 동기화 사진 사용량 — 무료는 FREE_PHOTO_SYNC_LIMIT 장까지
+  renderPhotoQuota();
+
   // 월별 — 최근 12개월, 기록 없는 달도 0으로
   const months=[], byKey={};
   for(let i=11;i>=0;i--){
@@ -1620,6 +1872,16 @@ async function renderStats(obsIn){
   wrap.innerHTML=`<div class="lifelist">${lifeRows.map((s,i)=>`<button class="lrow" data-i="${i}"><span class="nm">${esc(s.name)}</span><span class="fd">${s.first?s.first.slice(0,10).replace(/-/g,"."):"—"}</span><span class="cn">${num(s.n)}회</span></button>`).join("")}</div>`;
   wrap.querySelectorAll(".lrow").forEach(r=>r.onclick=()=>openSpecies(lifeRows[+r.dataset.i].name));
 }
+async function renderPhotoQuota(){
+  const el=$("#st-photo"); if(!el) return;
+  const n=await syncedPhotoCount();
+  const full=!isPremium&&n>=FREE_PHOTO_SYNC_LIMIT;
+  el.classList.toggle("full",full);
+  el.innerHTML=isPremium
+    ? `<span>동기화 사진</span><b>${n}<small> · 무제한</small></b>`
+    : `<span>동기화 사진</span><b>${n}/${FREE_PHOTO_SYNC_LIMIT}</b>`;
+}
+
 /* 라이프리스트 행 → 목록 탭에서 그 종만 */
 async function openSpecies(name){
   activeSpecies=name; activeTag=null; $("#search").value="";
