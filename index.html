@@ -1833,11 +1833,10 @@ async function loadFavs(){
 }
 
 /* ---- 근처 편의점 (카카오 로컬 카테고리 검색 CS2) ----
-   ⚠ 이 키는 정적 페이지에 그대로 실려 공개된다. 카카오 개발자 콘솔에서
-      플랫폼 도메인을 등록해 두고, 할당량이 새면 키를 갈아 끼워야 한다. */
-const CVS_KEY="8b4e825a21e24a86fb461d07501c1ccb";
-const CVS_API="https://dapi.kakao.com/v2/local/search/category.json";
-const CVS_RADIUS=3000, CVS_SIZE=5, CVS_TTL=24*60*60*1000;   // 24시간 캐시
+   카카오 REST 키는 Supabase Edge Function(nearby-cs) 뒤에 있다. 이 파일에는 키가 없다.
+   반경·정렬 같은 검색 조건도 함수 쪽에 있다. */
+const CVS_FN="nearby-cs";
+const CVS_SIZE=5, CVS_TTL=24*60*60*1000;   // 24시간 캐시
 function cvsCacheKey(lat,lng){return lat.toFixed(3)+","+lng.toFixed(3);}
 function fmtDist(m){return m>=1000?(m/1000).toFixed(1)+" km":Math.round(m)+" m";}
 
@@ -1848,13 +1847,11 @@ async function nearbyCVS(lat,lng){
     const hit=await getCvs(id);
     if(hit&&Array.isArray(hit.items)&&Date.now()-(hit.ts||0)<CVS_TTL) return hit.items;
   }catch(e){ console.error("편의점 캐시 읽기",e); }
-  const url=CVS_API+"?category_group_code=CS2"
-    +"&x="+encodeURIComponent(lng)+"&y="+encodeURIComponent(lat)
-    +"&radius="+CVS_RADIUS+"&sort=distance&size="+CVS_SIZE;
-  const r=await fetch(url,{headers:{Authorization:"KakaoAK "+CVS_KEY}});
-  if(!r.ok) throw new Error("kakao "+r.status);
-  const j=await r.json();
-  const items=(j.documents||[]).slice(0,CVS_SIZE).map(d=>({
+  const c=sbClient();
+  if(!c) throw new Error("supabase client 없음");
+  const {data,error}=await c.functions.invoke(CVS_FN,{body:{lat,lng}});
+  if(error) throw error;
+  const items=((data&&data.documents)||[]).slice(0,CVS_SIZE).map(d=>({
     name:d.place_name||"이름 없음",
     dist:parseInt(d.distance,10)||0,
     url:d.place_url||""
