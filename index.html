@@ -164,14 +164,6 @@
     font-family:inherit;color:var(--amber-soft);cursor:pointer;
   }
 
-  .suntime{
-    margin:8px 0 0;padding:8px 12px;border-radius:9px;
-    background:#f0fbfb;border:1px solid #b7dcdd;
-    font-size:12.5px;font-weight:600;color:var(--amber-d);
-    font-variant-numeric:tabular-nums;letter-spacing:.2px;
-  }
-  .suntime[hidden]{display:none}
-
   .save{
     width:100%;background:linear-gradient(180deg,var(--amber) 0%,var(--amber-d) 100%);
     color:#ffffff;border-radius:13px;padding:16px;
@@ -428,7 +420,6 @@
         <div class="txt"><b id="gps-coord">위치 확인 중…</b><small id="gps-sub">GPS를 켜고 잠시 기다려 주세요</small></div>
         <button type="button" id="gps-retry">다시</button>
       </div>
-      <p class="suntime" id="suntime" hidden></p>
     </div>
 
     <div class="dtrow">
@@ -668,24 +659,16 @@ async function copyText(s){
 function sunOK(){ return !window.__suncalcFailed && typeof SunCalc!=="undefined" && !!(SunCalc&&SunCalc.getTimes); }
 function hhmm(d){ return (d instanceof Date && !isNaN(d.getTime())) ? pad(d.getHours())+":"+pad(d.getMinutes()) : null; }
 /* dawn/dusk 는 시민박명(태양 고도 -6°). 고위도의 백야·극야에선 Invalid Date 라 그 항목만 빠진다. */
-function sunLine(lat,lng,when,withTwilight){
+const SUN_LABEL={dawn:"시민박명",sunrise:"일출",sunset:"일몰",dusk:"저녁박명"};
+const SUN_ALL=["dawn","sunrise","sunset","dusk"];
+/* 시간 순으로 이어 붙인다 — 아침 박명 → 일출 → 일몰 → 저녁 박명 */
+function sunTimesLine(lat,lng,when,keys){
   if(!sunOK()||!Number.isFinite(lat)||!Number.isFinite(lng)) return "";
   let t;
   try{ t=SunCalc.getTimes(when||new Date(),lat,lng); }catch(e){ return ""; }
-  const rise=hhmm(t.sunrise), set=hhmm(t.sunset), dawn=hhmm(t.dawn), dusk=hhmm(t.dusk);
-  if(!rise&&!set) return "";
   const parts=[];
-  if(rise) parts.push("일출 "+rise);
-  if(set) parts.push("일몰 "+set);
-  if(withTwilight&&dawn&&dusk) parts.push("시민박명 "+dawn+"/"+dusk);
+  (keys||SUN_ALL).forEach(k=>{const v=hhmm(t[k]); if(v) parts.push(SUN_LABEL[k]+" "+v);});
   return parts.join(" · ");
-}
-/* 기록 화면 GPS 카드 아래 — 지금 잡힌 좌표의 오늘 기준 시각. 좌표가 없으면 아예 표시하지 않는다. */
-function renderSunTime(){
-  const el=$("#suntime"); if(!el) return;
-  const txt=curPos?sunLine(curPos.lat,curPos.lng,new Date(),true):"";
-  el.textContent=txt?"☀ "+txt:"";
-  el.hidden=!txt;
 }
 
 /* ============ GPS + 지명 변환 ============ */
@@ -716,19 +699,17 @@ async function reverseGeocode(lat,lng){
 function grabGPS(){
   const box=$("#gps"),coord=$("#gps-coord"),sub=$("#gps-sub");
   box.className="gps";coord.textContent="위치 확인 중…";sub.textContent="GPS를 켜고 잠시 기다려 주세요";curPlace=null;
-  curPos=null;renderSunTime();
   if(!navigator.geolocation){box.classList.add("err");coord.textContent="GPS 미지원";sub.textContent="이 브라우저에선 위치를 쓸 수 없어요";return;}
   navigator.geolocation.getCurrentPosition(
     async p=>{
       curPos={lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy};
-      renderSunTime();
       box.classList.add("live");
       coord.innerHTML="<b>위치 확인됨</b>";sub.textContent="지명 확인 중…";
       const place=await reverseGeocode(curPos.lat,curPos.lng);
       if(place){curPlace=place;coord.innerHTML="<b>"+esc(place)+"</b>";sub.textContent="정확도 약 "+Math.round(curPos.acc)+" m";}
       else{curPlace=null;coord.innerHTML="<b>위치 기록됨</b>";sub.textContent="지명은 확인 못 했어요 · 좌표는 저장돼요";}
     },
-    e=>{box.classList.add("err");curPos=null;curPlace=null;renderSunTime();coord.textContent="위치를 못 잡았어요";sub.textContent=e.code===1?"위치 권한을 허용해 주세요":"‘다시’를 눌러 재시도하세요";},
+    e=>{box.classList.add("err");curPos=null;curPlace=null;coord.textContent="위치를 못 잡았어요";sub.textContent=e.code===1?"위치 권한을 허용해 주세요":"‘다시’를 눌러 재시도하세요";},
     {enableHighAccuracy:true,timeout:12000,maximumAge:0}
   );
 }
@@ -1809,7 +1790,7 @@ function mapMsg(t){ const el=$("#map-msg"); if(!el) return; el.textContent=t||""
 
 function pinPopup(o){
   const dt=[o.date?o.date.replace(/-/g,"."):"", o.time||""].filter(Boolean).join("  ·  ");
-  const sun=sunLine(o.lat,o.lng,new Date(),false);   // 그 지점의 오늘 기준
+  const sun=sunTimesLine(o.lat,o.lng,new Date(),["sunrise","sunset"]);   // 그 지점의 오늘 기준
   return `<div class="pop"><b>${esc(o.species||"이름 없음")}</b>`
     +(dt?`<span>${esc(dt)}</span>`:"")
     +(o.place?`<span>${esc(o.place)}</span>`:"")
