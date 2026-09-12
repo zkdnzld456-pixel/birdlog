@@ -434,8 +434,12 @@
   .favrow:active{background:var(--bark)}
   .favrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     font-family:"Gowun Batang",serif;font-weight:700;font-size:15.5px;color:var(--amber-soft)}
-  .favrow .sn{font-size:11.5px;font-weight:600;color:var(--muted);
-    font-variant-numeric:tabular-nums;white-space:nowrap}
+  .favrow .sn{flex:none;display:flex;flex-direction:column;gap:1px;
+    font-size:11.5px;font-weight:600;color:var(--muted);
+    font-variant-numeric:tabular-nums;line-height:1.3}
+  /* 한 줄씩 통째로 줄바꿈을 막아 폰 폭에서도 시각이 잘리지 않는다 */
+  .favrow .sn .r{white-space:nowrap}
+  .favrow .sn .r .ic{margin-right:3px}
   .favempty{background:var(--bark);border:1.5px dashed var(--line);border-radius:11px;
     padding:20px 16px;text-align:center;font-size:12.5px;color:var(--muted);line-height:1.6}
 
@@ -2086,12 +2090,18 @@ function renderFavs(){
   const when=dateFromInput(inp?inp.value:"")||dateFromInput(tomorrowYMD());
   const favs=favCache.slice().sort((a,b)=>(b.created||0)-(a.created||0));
   if(!favs.length){
-    wrap.innerHTML=`<div class="favempty">지도에서 핀을 누르거나 빈 곳을 길게 눌러 ★ 를 담아 보세요.<br>고른 날짜의 일출·시민박명을 여기서 한눈에 볼 수 있어요.</div>`;
+    wrap.innerHTML=`<div class="favempty">지도에서 핀을 누르거나 빈 곳을 길게 눌러 ★ 를 담아 보세요.<br>고른 날짜의 일출·일몰과 박명을 여기서 한눈에 볼 수 있어요.</div>`;
     return;
   }
   wrap.innerHTML=`<div class="favlist">${favs.map(f=>{
-    const line=sunTimesLine(f.lat,f.lng,when,["dawn","sunrise"]);
-    return `<div class="favrow" data-id="${attr(f.id)}" title="길게 누르면 삭제"><span class="nm">${esc(f.name)}</span><span class="sn">${esc(line||"—")}</span></div>`;
+    // 고위도에서는 한쪽이 비어 올 수 있다 — 있는 줄만 그린다
+    const am=sunTimesLine(f.lat,f.lng,when,["dawn","sunrise"]);
+    const pm=sunTimesLine(f.lat,f.lng,when,["sunset","dusk"]);
+    const sun=(am||pm)
+      ? (am?`<span class="r"><span class="ic">🌅</span>${esc(am)}</span>`:"")
+        +(pm?`<span class="r"><span class="ic">🌇</span>${esc(pm)}</span>`:"")
+      : `<span class="r">—</span>`;
+    return `<div class="favrow" data-id="${attr(f.id)}" title="길게 누르면 삭제"><span class="nm">${esc(f.name)}</span><span class="sn">${sun}</span></div>`;
   }).join("")}</div>`;
   wrap.querySelectorAll(".favrow").forEach(r=>onLongPress(r,()=>removeFav(r.dataset.id)));
 }
