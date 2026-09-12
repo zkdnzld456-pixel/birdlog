@@ -176,6 +176,7 @@
   .tools input{flex:1}
   .chips{display:flex;flex-wrap:nowrap;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch}
   .chips::-webkit-scrollbar{display:none}
+  .chips[hidden]{display:none}
   .chip{
     font-size:12px;font-weight:600;padding:6px 11px;border-radius:20px;white-space:nowrap;flex:none;
     background:var(--bark);border:1.5px solid var(--line);color:var(--muted);cursor:pointer;
@@ -453,6 +454,8 @@
     </div>
     <div class="st-sec">
       <div class="st-head"><h2>관찰 지도</h2></div>
+      <div class="chips" id="map-spchips" hidden></div>
+      <div class="chips" id="map-tagchips" hidden></div>
       <div class="mapwrap">
         <div id="st-map"></div>
         <div class="map-label" id="map-label" hidden>내 관찰 지도</div>
@@ -1442,6 +1445,56 @@ async function initSync(){
        그 파일을 공개용으로 바꾸게 된다면 좌표부터 먼저 빼야 합니다.) */
 const KR_CENTER=[36.5,127.8], KR_ZOOM=7;
 let blMap=null, blPins=null, blPinIcon=null, blFitKey="";
+/* 지도 전용 필터 — 목록 탭의 activeSpecies/activeTag와 완전히 별개로 둔다 (서로 건드리지 않음) */
+let mapSp=null, mapTag=null, blObs=[];
+
+function mapFiltered(){
+  return blObs.filter(o=>{
+    if(mapSp && o.species!==mapSp) return false;
+    if(mapTag && !(o.tags||[]).includes(mapTag)) return false;
+    return true;
+  });
+}
+
+/* 지도 위 칩 두 줄 — 목록 탭 spchips/tagchips와 같은 스타일·가로 스크롤 */
+function renderMapChips(){
+  const ea=v=>esc(v).replace(/"/g,"&quot;");
+  const spCount={}, tagCount={};
+  blObs.forEach(o=>{
+    if(o.species) spCount[o.species]=(spCount[o.species]||0)+1;
+    (o.tags||[]).forEach(t=>tagCount[t]=(tagCount[t]||0)+1);
+  });
+  if(mapSp && !spCount[mapSp]) mapSp=null;      // 기록이 사라진 필터는 자동 해제
+  if(mapTag && !tagCount[mapTag]) mapTag=null;
+
+  const sps=Object.keys(spCount).sort((a,b)=>spCount[b]-spCount[a]||a.localeCompare(b,"ko"));
+  const tags=Object.keys(tagCount).sort((a,b)=>tagCount[b]-tagCount[a]);
+
+  // 다시 그릴 때 가로 스크롤 위치가 튀지 않게 유지
+  const fill=(el,html)=>{ if(!el) return; const sc=el.scrollLeft; el.innerHTML=html; el.hidden=!html; el.scrollLeft=sc; };
+
+  fill($("#map-spchips"), sps.length
+    ? `<span class="chip${mapSp?"":" on"}" data-sp="">전체</span>`
+      +sps.map(s=>`<span class="chip sp${mapSp===s?" on":""}" data-sp="${ea(s)}">${esc(s)} ${spCount[s]}</span>`).join("")
+    : "");
+  fill($("#map-tagchips"), tags.length
+    ? `<span class="chip${mapTag?"":" on"}" data-tag="">전체</span>`
+      +tags.map(t=>`<span class="chip${mapTag===t?" on":""}" data-tag="${ea(t)}">#${esc(t)} ${tagCount[t]}</span>`).join("")
+    : "");
+
+  // "전체" 칩(값 없음)은 해제, 켜져 있는 칩을 다시 탭해도 해제
+  $("#map-spchips").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{
+    const v=c.dataset.sp;
+    mapSp = (!v || v===mapSp) ? null : v;
+    renderMap();
+  });
+  $("#map-tagchips").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{
+    const v=c.dataset.tag;
+    mapTag = (!v || v===mapTag) ? null : v;
+    renderMap();
+  });
+}
+
 
 function leafletOK(){ return !window.__leafletFailed && typeof L!=="undefined" && !!(L&&L.map); }
 
@@ -1478,14 +1531,17 @@ function pinPopup(o){
 
 /* 통계 탭을 열 때마다 호출 — 기록 추가/삭제가 바로 반영된다 */
 function renderMap(obs){
+  if(obs) blObs=obs;                        // 인자 없이 부르면(칩 탭) 직전 기록을 그대로 재사용
   const label=$("#map-label");
-  const pts=(obs||[]).filter(o=>Number.isFinite(o.lat)&&Number.isFinite(o.lng));
   const m=ensureMap();
   if(!m){                                   // CDN 실패 등 — 지도만 비우고 나머지 통계는 정상 동작
     if(label) label.hidden=true;
+    $("#map-spchips").hidden=true; $("#map-tagchips").hidden=true;
     mapMsg("지도를 불러오지 못했어요");
     return;
   }
+  renderMapChips();
+  const pts=mapFiltered().filter(o=>Number.isFinite(o.lat)&&Number.isFinite(o.lng));
   if(label){ label.hidden=false; label.textContent=`내 관찰 지도 · ${pts.length}곳`; }
 
   blPins.clearLayers();
@@ -1501,7 +1557,7 @@ function renderMap(obs){
     else if(pts.length===1) m.setView([pts[0].lat,pts[0].lng],14);
     else m.fitBounds(L.latLngBounds(pts.map(o=>[o.lat,o.lng])),{padding:[34,34],maxZoom:15});
   }
-  mapMsg(pts.length?"":"위치 기록이 아직 없어요");
+  mapMsg(pts.length ? "" : ((mapSp||mapTag) ? "해당 기록에 위치가 없어요" : "위치 기록이 아직 없어요"));
 }
 
 /* 탭 전환으로 컨테이너 크기가 달라질 수 있어 표시 직후 크기를 다시 잡아 준다 */
