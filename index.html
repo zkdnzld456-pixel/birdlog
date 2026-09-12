@@ -1449,7 +1449,13 @@ function leafletOK(){ return !window.__leafletFailed && typeof L!=="undefined" &
 function ensureMap(){
   if(blMap) return blMap;
   if(!leafletOK()) return null;
-  blMap=L.map("st-map",{zoomControl:true,scrollWheelZoom:false}).setView(KR_CENTER,KR_ZOOM);
+  blMap=L.map("st-map",{
+    zoomControl:true,
+    scrollWheelZoom:true,   // 데스크톱 휠 확대·축소
+    dragging:true,          // 손가락/마우스 드래그 이동
+    touchZoom:true,         // 두 손가락 핀치 확대·축소
+    doubleClickZoom:true
+  }).setView(KR_CENTER,KR_ZOOM);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{
     maxZoom:19,
     attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> 기여자'
@@ -1579,8 +1585,10 @@ $("#search").oninput=()=>renderList();
 $("#sort").onchange=()=>renderList();
 
 /* ============ init ============ */
-document.addEventListener("gesturestart",e=>e.preventDefault());
-document.addEventListener("gesturechange",e=>e.preventDefault());
+// 페이지 전체 확대는 막되, 지도 위에서는 통과시킨다 (지도 자체 핀치줌을 쓰라고)
+function inMap(e){ return !!(e.target&&e.target.closest&&e.target.closest("#st-map")); }
+document.addEventListener("gesturestart",e=>{if(!inMap(e))e.preventDefault();});
+document.addEventListener("gesturechange",e=>{if(!inMap(e))e.preventDefault();});
 (async function(){fillNow();await refreshSpeciesList();await renderAll();grabGPS();initSync();})();
 </script>
 </body>
