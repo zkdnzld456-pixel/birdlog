@@ -103,6 +103,19 @@
     width:100%;margin-top:10px;background:none;border:1px solid #f0d2c8;border-radius:12px;
     padding:13px;font-size:14px;font-weight:600;font-family:inherit;color:var(--rust);cursor:pointer;
   }
+  /* 되돌릴 수 없는 동작 — 로그아웃보다 한 단계 더 눈에 띄게 */
+  .auth-danger{
+    width:100%;margin-top:18px;background:none;border:1.5px solid var(--rust);border-radius:12px;
+    padding:13px;font-size:14px;font-weight:700;font-family:inherit;color:var(--rust);cursor:pointer;
+  }
+  .auth-danger:disabled{opacity:.55}
+  /* 개인정보처리방침 링크 — 로그인 시트 맨 아래, 통계 탭 맨 아래 */
+  .pp-link{
+    display:block;text-align:center;margin:16px 0 2px;
+    font-size:12px;font-weight:600;color:var(--muted);text-decoration:underline;
+    text-underline-offset:3px;text-decoration-color:var(--line);
+  }
+  .st-pp{margin:26px 0 6px}
 
   main{max-width:560px;margin:0 auto;padding:18px 16px}
 
@@ -564,6 +577,7 @@
       </div>
       <p class="map-hint">지도를 길게 누르면(PC는 우클릭) 그 지점의 일출·박명을 볼 수 있어요.</p>
     </div>
+    <a class="pp-link st-pp" href="privacy.html" target="_blank" rel="noopener">개인정보처리방침</a>
   </section>
 </main>
 
@@ -653,7 +667,8 @@
           <input id="auth-email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" enterkeyhint="send">
         </div>
         <button id="auth-send" class="cm-save">로그인 링크 받기</button>
-        <p class="cm-hint">메일로 온 링크를 이 기기에서 열면 로그인돼요. 비밀번호는 없어요.</p>
+        <p class="cm-hint">메일로 온 링크를 이 기기에서 열면 로그인돼요. 비밀번호는 없어요.<br>
+          로그인하면 개인정보처리방침에 동의하는 것으로 봅니다.</p>
       </div>
       <div id="auth-in" style="display:none">
         <p class="auth-desc"><b id="auth-who"></b><br>계정으로 로그인돼 있어요.</p>
@@ -661,7 +676,10 @@
         <button id="auth-sync" class="cm-save">지금 동기화</button>
         <button id="auth-signout" class="auth-signout">로그아웃</button>
         <p class="cm-hint">로그아웃해도 이 기기의 기록은 지워지지 않아요. 사진은 기본적으로 이 기기에만 저장되고, 목록에서 ☁ 를 켠 사진만 올라가요.</p>
+        <button id="auth-delete" class="auth-danger">계정 삭제</button>
+        <p class="cm-hint">서버에 있는 기록·사진과 이 기기의 기록을 모두 지워요. 되돌릴 수 없어요.</p>
       </div>
+      <a class="pp-link" href="privacy.html" target="_blank" rel="noopener">개인정보처리방침</a>
     </div>
   </div>
 </div>
@@ -1798,6 +1816,94 @@ $("#auth-signout").onclick=async()=>{
   sbUser=null;authUI();syncUI();closeAuth();
   toast("로그아웃됐어요 · 기록은 이 기기에 남아 있어요");
 };
+
+/* ============ 계정 삭제 ============
+   서버(기록 + 사진)를 먼저 지우고, 성공한 뒤에 이 기기를 비운다.
+   순서를 바꾸면 서버에서 실패했을 때 기기 기록만 날아간다.
+   auth.users 의 계정 자체는 클라이언트에서 지울 수 없어 이메일로 안내한다. */
+const OWNER_MAIL="zkdnzld456@gmail.com";
+
+/* 내 폴더 아래 파일 경로를 전부 모은다 — <uid>/<기록id>/<사진id>.jpg 두 단계 */
+async function listMyPhotoPaths(){
+  const c=sbClient(), out=[];
+  async function walk(prefix){
+    for(let page=0;;page++){
+      const {data,error}=await c.storage.from(PH_BUCKET)
+        .list(prefix,{limit:100,offset:page*100});
+      if(error) throw error;
+      const items=data||[];
+      for(const it of items){
+        const path=prefix+"/"+it.name;
+        if(it.id) out.push(path);     // 파일은 id 가 있고, 폴더는 없다
+        else await walk(path);
+      }
+      if(items.length<100) break;
+    }
+  }
+  await walk(sbUser.id);
+  return out;
+}
+
+/* IndexedDB 세 저장소를 비운다 (기록·즐겨찾기 장소·편의점 캐시) */
+async function wipeLocalStores(){
+  const d=await db();
+  await new Promise((res,rej)=>{
+    const t=d.transaction([STORE,FAV_STORE,CVS_STORE],"readwrite");
+    t.objectStore(STORE).clear();
+    t.objectStore(FAV_STORE).clear();
+    t.objectStore(CVS_STORE).clear();
+    t.oncomplete=()=>res();
+    t.onerror=()=>rej(t.error);
+    t.onabort=()=>rej(t.error);
+  });
+}
+
+async function deleteAccount(){
+  const c=sbClient();
+  if(!c||!sbUser) return;
+  if(!navigator.onLine){toast("오프라인이에요 · 연결된 뒤에 다시 시도해 주세요");return;}
+  if(!confirm("계정에 올라간 기록과 사진, 그리고 이 기기의 기록을 모두 지웁니다.\n되돌릴 수 없어요. 계속할까요?")) return;
+  if((prompt('정말 지우려면 아래에 "삭제" 를 입력해 주세요.')||"").trim()!=="삭제"){
+    toast("계정 삭제를 취소했어요");
+    return;
+  }
+
+  const btn=$("#auth-delete");
+  btn.disabled=true;btn.textContent="지우는 중…";
+  clearTimeout(syncTimer);              // 지우는 동안 동기화가 끼어들지 않게
+
+  try{
+    // 1) 서버 사진 — 지울 게 없으면 목록이 비어 있을 뿐이다
+    const paths=await listMyPhotoPaths();
+    for(let i=0;i<paths.length;i+=100){
+      const {error}=await c.storage.from(PH_BUCKET).remove(paths.slice(i,i+100));
+      if(error) throw error;
+    }
+    // 2) 서버 기록
+    const {error}=await c.from(SB_TABLE).delete().eq("user_id",sbUser.id);
+    if(error) throw error;
+  }catch(e){
+    console.error("계정 삭제",e);
+    btn.disabled=false;btn.textContent="계정 삭제";
+    toast("서버에서 지우지 못했어요 · 이 기기의 기록은 그대로예요");
+    return;
+  }
+
+  // 3) 이 기기
+  try{ localStorage.removeItem("bl_ph_removed"); }catch(e){}
+  try{ localStorage.removeItem("bl_migrated_"+sbUser.id); }catch(e){}
+  try{ await wipeLocalStores(); }
+  catch(e){ console.error("로컬 삭제",e); toast("이 기기의 기록을 다 비우지 못했어요"); }
+
+  // 4) 로그아웃
+  try{ await c.auth.signOut(); }catch(e){ console.error(e); }
+  sbUser=null; favCache=[];
+  btn.disabled=false; btn.textContent="계정 삭제";
+  authUI(); syncUI(); closeAuth();
+  await renderAll(); renderFavs();
+  alert("지웠습니다.\n\n로그인에 쓰는 계정 자체는 앱에서 지울 수 없어요.\n그것까지 지우시려면 "+OWNER_MAIL+" 으로 알려 주세요.");
+}
+$("#auth-delete").onclick=deleteAccount;
 
 async function initSync(){
   authUI();syncUI();

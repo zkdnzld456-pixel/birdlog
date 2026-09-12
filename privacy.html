@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>개인정보처리방침 — Birdlog</title>
+<meta name="theme-color" content="#0f9aa3">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* index.html 과 같은 팔레트 — 화이트 + 물총새 청록 */
+  :root{
+    --night:#ffffff;
+    --bark:#f3f7f7;
+    --bark-2:#e8eeee;
+    --line:#c4d2d2;
+    --amber:#0f9aa3;
+    --amber-d:#0b7d85;
+    --amber-soft:#0a6f78;
+    --cream:#13201f;
+    --muted:#566565;
+    --muted-d:#859797;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--night);
+    color:var(--cream);
+    font-family:"IBM Plex Sans KR",system-ui,sans-serif;
+    font-size:16px;line-height:1.5;
+    background-image:radial-gradient(120% 50% at 50% -10%, #eef6f6 0%, var(--night) 55%);
+  }
+  header{
+    position:sticky;top:0;z-index:20;
+    background:#ffffff;
+    padding:13px 18px;padding-top:max(13px,env(safe-area-inset-top));
+    border-bottom:1px solid var(--line);
+    box-shadow:0 2px 10px rgba(20,60,60,.05);
+  }
+  header .back{
+    display:inline-flex;align-items:center;gap:6px;
+    font-size:12.5px;font-weight:600;color:var(--amber-soft);text-decoration:none;
+  }
+  main{max-width:560px;margin:0 auto;padding:22px 18px 60px}
+
+  h1{
+    font-family:"Gowun Batang",serif;font-weight:700;
+    font-size:27px;letter-spacing:.5px;line-height:1.35;margin:0 0 10px;
+  }
+  .eff{
+    display:inline-block;font-size:11.5px;font-weight:600;letter-spacing:.3px;color:var(--amber-d);
+    background:#f0fbfb;border:1px solid #b7dcdd;border-radius:20px;padding:4px 11px;
+  }
+  .lede{font-size:14.5px;color:var(--muted);line-height:1.75;margin:16px 0 0}
+  .lede b{color:var(--cream);font-weight:600}
+
+  section{margin-top:34px}
+  h2{
+    font-family:"Gowun Batang",serif;font-weight:700;
+    font-size:20px;letter-spacing:.3px;margin:0 0 12px;color:var(--cream);
+  }
+  h2::before{
+    content:"";display:block;width:34px;height:3px;border-radius:2px;
+    background:var(--amber);margin-bottom:10px;
+  }
+  p{margin:0 0 12px;font-size:14.5px;line-height:1.8;color:var(--cream)}
+  p.note{font-size:13.5px;color:var(--muted);line-height:1.75}
+  p b{font-weight:600}
+
+  ul{margin:0 0 12px;padding:0;list-style:none}
+  ul li{
+    position:relative;padding:0 0 0 16px;margin-bottom:10px;
+    font-size:14.5px;line-height:1.75;
+  }
+  ul li::before{
+    content:"";position:absolute;left:2px;top:11px;
+    width:5px;height:5px;border-radius:50%;background:var(--amber);
+  }
+  ul li b{font-weight:600}
+  ul li small{display:block;font-size:13px;color:var(--muted);line-height:1.65;margin-top:2px}
+
+  /* 위치 정보 — 따로 읽히도록 테두리를 준 단락 */
+  .box{
+    background:var(--bark);border:1.5px solid var(--line);border-left:4px solid var(--amber);
+    border-radius:12px;padding:16px 16px 4px;margin:34px 0 0;
+  }
+  .box section{margin-top:0}
+  .box h2{margin-top:0}
+
+  /* 제3자 목록 */
+  .third{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:0 0 12px}
+  .third .row{
+    display:flex;gap:12px;padding:12px 14px;background:#fff;
+    border-top:1px solid var(--bark-2);
+  }
+  .third .row:first-child{border-top:none}
+  .third .who{
+    flex:none;width:106px;font-size:13px;font-weight:700;color:var(--amber-soft);line-height:1.6;
+  }
+  .third .what{flex:1;min-width:0;font-size:13.5px;color:var(--cream);line-height:1.7}
+  .third .what small{display:block;color:var(--muted);font-size:12.5px;margin-top:2px}
+
+  a{color:var(--amber-d)}
+  .mailto{font-weight:600;white-space:nowrap}
+
+  footer{
+    margin-top:40px;padding-top:18px;border-top:1px solid var(--line);
+    font-size:12.5px;color:var(--muted-d);line-height:1.8;
+  }
+  @media (max-width:380px){
+    .third .row{flex-direction:column;gap:3px}
+    .third .who{width:auto}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="index.html">← Birdlog 로 돌아가기</a>
+</header>
+
+<main>
+  <h1>개인정보처리방침</h1>
+  <span class="eff">시행일 2026년 9월 13일</span>
+
+  <p class="lede">Birdlog 는 탐조 기록을 남기는 앱입니다. 이 문서는 <b>어떤 정보를 받아서, 어디에 두고, 언제 지우는지</b> 적어 둔 것입니다. 읽는 데 오래 걸리지 않도록 짧게 썼습니다.</p>
+
+  <section>
+    <h2>누가 운영하나요</h2>
+    <p>Birdlog 는 회사가 아니라 개인이 만들어 운영합니다. 개인정보에 관한 문의와 요청은 아래 주소로 받습니다.</p>
+    <ul>
+      <li><b>서비스명</b> Birdlog</li>
+      <li><b>운영자</b> 개인 운영자 1인</li>
+      <li><b>연락처</b> <a class="mailto" href="mailto:zkdnzld456@gmail.com">zkdnzld456@gmail.com</a></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>무엇을 받나요</h2>
+    <p>로그인하지 않고 쓰면 기록은 이 기기 안에만 있고, 서버로 올라가는 것은 없습니다. 로그인하면 아래 항목이 계정에 묶여 저장됩니다.</p>
+    <ul>
+      <li><b>이메일 주소</b>
+        <small>로그인에 씁니다. 비밀번호는 받지 않습니다.</small></li>
+      <li><b>관찰 기록</b>
+        <small>종 이름, 날짜와 시각, 개체 수, 태그, 메모.</small></li>
+      <li><b>관찰 지점의 GPS 좌표와 지명</b>
+        <small>기록을 남길 때 받은 위도·경도, 그리고 그 좌표로 찾은 지명.</small></li>
+      <li><b>사진</b>
+        <small>사진은 기본적으로 이 기기에만 있습니다. 목록에서 ☁ 를 켠 사진만 서버로 올라갑니다.</small></li>
+      <li><b>즐겨찾기 장소</b>
+        <small>지도에서 ★ 로 담아 둔 장소의 이름과 좌표. 이 기기에만 저장하고 서버로 올리지 않습니다.</small></li>
+    </ul>
+    <p class="note">나이·성별·주소·전화번호 같은 것은 받지 않습니다. 광고를 붙이거나 이용 행태를 추적하는 도구도 넣지 않았습니다.</p>
+  </section>
+
+  <section>
+    <h2>왜 받나요</h2>
+    <ul>
+      <li><b>기록 저장</b> — 적어 둔 관찰 기록을 잃지 않게 보관합니다.</li>
+      <li><b>기기 간 동기화</b> — 휴대폰에서 적은 기록을 다른 기기에서도 보게 합니다.</li>
+      <li><b>통계</b> — 종 수, 월별 관찰 횟수, 라이프리스트처럼 본인 기록을 모아 보여 줍니다.</li>
+      <li><b>일출·일몰 계산</b> — 좌표로 그 지점의 일출·일몰과 박명 시각을 계산합니다.</li>
+      <li><b>근처 편의점 검색</b> — 버튼을 누른 그때, 그 지점 둘레의 편의점을 찾습니다.</li>
+    </ul>
+    <p class="note">받은 정보는 위에 적은 일 말고 다른 데 쓰지 않습니다. 팔지 않습니다.</p>
+  </section>
+
+  <div class="box">
+    <section>
+      <h2>위치 정보</h2>
+      <p>탐조 기록에서 위치는 가장 조심스러운 항목이라고 보고, 따로 적습니다.</p>
+      <ul>
+        <li><b>언제 받나요</b> — 기록을 남길 때, 그리고 지도에서 지점을 고를 때만 받습니다. 앱을 쓰지 않는 동안 위치를 따라다니며 모으지 않습니다.</li>
+        <li><b>누가 보나요</b> — 본인만 봅니다. 다른 이용자에게 보이지 않고, 위치를 모아 공개하거나 제3자에게 넘기지 않습니다.</li>
+        <li><b>공유 카드</b> — 기록으로 만드는 공유 카드에는 좌표도 지명도 넣지 않습니다. 카드를 올려도 둥지나 서식지의 위치가 드러나지 않게 하려는 것입니다.</li>
+        <li><b>편의점 검색</b> — 버튼을 누른 그때, 그 지점의 좌표만 카카오에 보냅니다. 누가 찾았는지는 보내지 않고, 계정과 묶어 두지도 않습니다.</li>
+        <li><b>거부할 수 있습니다</b> — 기기 설정에서 위치 권한을 꺼도 앱은 그대로 쓸 수 있습니다. 좌표가 없는 기록으로 남습니다.</li>
+      </ul>
+      <p class="note">위치는 관찰 기록의 일부라서, 기록을 지우면 그 기록의 좌표도 함께 사라집니다.</p>
+    </section>
+  </div>
+
+  <section>
+    <h2>어디에 두나요</h2>
+    <p>서버 저장은 Supabase 를 씁니다. 데이터베이스와 사진 저장소 모두 <b>서울 리전</b>에 있습니다.</p>
+    <ul>
+      <li><b>본인만 접근</b> — 데이터베이스에 행 수준 보안(RLS)을 걸어 두었습니다. 로그인한 계정은 자기 기록만 읽고 쓸 수 있고, 남의 기록에는 닿지 않습니다. 사진도 계정별 폴더로 나뉩니다.</li>
+      <li><b>기기 안</b> — 기록·사진·즐겨찾기 장소는 브라우저 저장소(IndexedDB)에도 남습니다. 인터넷이 끊겨도 쓸 수 있게 하려는 것입니다.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>밖으로 나가는 정보</h2>
+    <p>아래는 앱이 동작하는 데 필요한 곳들입니다. 필요한 그때, 필요한 것만 보냅니다.</p>
+    <div class="third">
+      <div class="row">
+        <div class="who">카카오</div>
+        <div class="what">근처 편의점을 찾을 때 그 지점의 좌표
+          <small>버튼을 눌렀을 때만. 계정 정보나 기록은 보내지 않습니다.</small></div>
+      </div>
+      <div class="row">
+        <div class="who">OpenStreetMap</div>
+        <div class="what">지도를 그리고 좌표로 지명을 찾을 때의 좌표
+          <small>지도를 열거나 기록을 남길 때.</small></div>
+      </div>
+      <div class="row">
+        <div class="who">Google</div>
+        <div class="what">Google 로그인을 고른 경우의 로그인 처리
+          <small>이메일 로그인만 쓰면 Google 로 가는 것은 없습니다.</small></div>
+      </div>
+      <div class="row">
+        <div class="who">Netlify</div>
+        <div class="what">이 페이지와 앱 화면을 내려받는 호스팅
+          <small>접속 기록이 호스팅 로그에 남을 수 있습니다.</small></div>
+      </div>
+    </div>
+    <p class="note">이 밖에 개인정보를 다른 곳에 제공하거나 팔지 않습니다. 각 서비스가 받은 정보를 어떻게 다루는지는 그 서비스의 방침을 따릅니다.</p>
+  </section>
+
+  <section>
+    <h2>얼마나 두나요</h2>
+    <p>계정을 쓰는 동안 보관하고, <b>계정을 삭제하면 즉시 지웁니다.</b> 사진도 함께 지웁니다. 따로 백업해 두었다가 나중에 되살리는 일은 없습니다.</p>
+    <p>앱의 <b>계정 · 동기화</b> 화면에서 <b>계정 삭제</b>를 누르면 서버에 있는 기록과 사진, 이 기기에 있는 기록이 모두 지워집니다. 로그인에 쓰는 계정 자체까지 지우려면 이메일로 알려 주세요. 확인한 뒤 지워 드립니다.</p>
+    <p class="note">기록을 남겨 두고 싶다면, 지우기 전에 목록 화면에서 JSON 으로 내려받아 두시면 됩니다.</p>
+  </section>
+
+  <section>
+    <h2>이용자의 권리</h2>
+    <p>언제든 아래를 요청할 수 있습니다. 대부분은 앱 안에서 바로 할 수 있고, 나머지는 메일로 받습니다.</p>
+    <ul>
+      <li><b>열람</b> — 목록 화면의 내려받기로 내 기록 전부를 JSON 으로 받을 수 있습니다.</li>
+      <li><b>정정·삭제</b> — 기록은 화면에서 고치거나 지울 수 있고, 계정에 올라간 것 전부는 계정 삭제로 지울 수 있습니다.</li>
+      <li><b>요청</b> — 직접 하기 어렵거나 계정 자체를 지우려면 <a class="mailto" href="mailto:zkdnzld456@gmail.com">zkdnzld456@gmail.com</a> 으로 보내 주세요.</li>
+    </ul>
+    <p class="note">메일로 온 요청은 확인한 뒤 처리하고, 처리한 내용을 답장으로 알려 드립니다.</p>
+  </section>
+
+  <section>
+    <h2>바뀔 때</h2>
+    <p>받는 항목이나 보관하는 방식이 바뀌면 이 문서를 고치고 시행일을 함께 바꿉니다. 중요한 변경은 앱 안에서 알려 드립니다.</p>
+  </section>
+
+  <footer>
+    Birdlog · 개인정보처리방침<br>
+    시행일 2026년 9월 13일<br>
+    문의 <a class="mailto" href="mailto:zkdnzld456@gmail.com">zkdnzld456@gmail.com</a>
+  </footer>
+</main>
+
+</body>
+</html>
