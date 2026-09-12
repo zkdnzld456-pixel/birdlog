@@ -1837,6 +1837,13 @@ async function loadFavs(){
    반경·정렬 같은 검색 조건도 함수 쪽에 있다. */
 const CVS_FN="nearby-cs";
 const CVS_SIZE=5, CVS_TTL=24*60*60*1000;   // 24시간 캐시
+/* 함수는 verify_jwt 가 켜져 있다 — 로그인 전에는 아예 부르지 않는다.
+   세션이 만료돼 401 이 돌아올 때도 같은 문구로 안내한다. */
+const CVS_LOGIN_MSG="로그인하면 근처 편의점을 볼 수 있어요";
+function cvsNeedsLogin(e){
+  const s=e&&(e.status||(e.context&&e.context.status));
+  return s===401;
+}
 function cvsCacheKey(lat,lng){return lat.toFixed(3)+","+lng.toFixed(3);}
 function fmtDist(m){return m>=1000?(m/1000).toFixed(1)+" km":Math.round(m)+" m";}
 
@@ -1873,6 +1880,7 @@ async function toggleCVS(btn,list,lat,lng){
   if(!list.hidden){ list.hidden=true; btn.classList.remove("on"); return; }
   list.hidden=false; btn.classList.add("on");
   if(list.dataset.loaded==="1") return;
+  if(!sbUser){ list.innerHTML=`<p class="cvs-msg">${CVS_LOGIN_MSG}</p>`; return; }
   list.innerHTML=`<p class="cvs-msg">불러오는 중…</p>`;
   try{
     const items=await nearbyCVS(lat,lng);
@@ -1881,7 +1889,8 @@ async function toggleCVS(btn,list,lat,lng){
     list.dataset.loaded="1";
   }catch(e){
     console.error("편의점 조회",e);
-    if(list.isConnected) list.innerHTML=`<p class="cvs-msg">지금은 조회할 수 없어요</p>`;
+    if(!list.isConnected) return;
+    list.innerHTML=`<p class="cvs-msg">${cvsNeedsLogin(e)?CVS_LOGIN_MSG:"지금은 조회할 수 없어요"}</p>`;
   }
 }
 

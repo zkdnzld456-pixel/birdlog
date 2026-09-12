@@ -1,6 +1,7 @@
 /* 근처 편의점 조회 (카카오 로컬 카테고리 검색 CS2).
    카카오 REST 키를 정적 페이지에 싣지 않으려고 이 함수 뒤에 숨긴다.
-   verify_jwt 는 꺼 두고(로그인 전에도 지도를 쓴다), 대신 Origin 으로 호출자를 제한한다. */
+   verify_jwt 를 켜서 로그인한 사람만 부를 수 있게 하고, 그 위에 Origin 검사를 겹친다.
+   (verify_jwt 는 플랫폼이 처리한다 — --no-verify-jwt 없이 배포할 것) */
 
 const KAKAO_API = "https://dapi.kakao.com/v2/local/search/category.json";
 const RADIUS = 3000, SIZE = 5;

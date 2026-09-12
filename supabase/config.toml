@@ -1,0 +1,6 @@
+project_id = "wmbmkwkyvbqlelcmrroh"
+
+# 근처 편의점 조회 — 로그인한 사람만 부를 수 있게 JWT 검증을 켠다.
+# (함수 안에서는 Origin 검사를 따로 한다)
+[functions.nearby-cs]
+verify_jwt = true
