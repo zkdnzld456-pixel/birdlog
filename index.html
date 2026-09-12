@@ -368,15 +368,22 @@
 
   /* ---- 팝업 안 계획 블록 (날짜별 일출·박명) ---- */
   .pop .plan{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);
-    display:flex;flex-direction:column;gap:6px}
+    display:flex;flex-direction:column;gap:8px}
   .pop .plan input.plan-date{
-    width:100%;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--cream);
-    background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:6px 8px;
+    width:auto;align-self:flex-start;max-width:100%;
+    font-family:inherit;font-size:12.5px;font-weight:600;color:var(--cream);
+    background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:5px 7px;
   }
-  .pop .plan .plan-sun{display:block;font-size:11.5px;font-weight:600;line-height:1.55;
-    color:var(--amber-d);font-variant-numeric:tabular-nums}
+  /* 네 시각을 2x2 로 — 라벨은 작게 회색, 시각은 청록 굵게 */
+  .pop .sun-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px 12px}
+  .pop .sun-cell{min-width:0}
+  .pop .sun-cell .sl{display:block;font-size:10px;font-weight:600;letter-spacing:.2px;
+    color:var(--muted);white-space:nowrap;line-height:1.3}
+  .pop .sun-cell .sv{display:block;font-size:15px;font-weight:700;line-height:1.25;
+    color:var(--amber-d);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pop .sun-none{margin:0;font-size:11.5px;font-weight:600;color:var(--muted)}
   .pop .plan .plan-fav{
-    align-self:flex-start;background:var(--bark);border:1.5px solid var(--line);border-radius:8px;
+    align-self:flex-end;background:var(--bark);border:1.5px solid var(--line);border-radius:8px;
     padding:6px 10px;font-size:12px;font-weight:700;font-family:inherit;color:var(--muted);cursor:pointer;
   }
   .pop .plan .plan-fav.on{background:var(--amber);border-color:var(--amber);color:#fff}
@@ -733,6 +740,22 @@ function sunTimesLine(lat,lng,when,keys){
   (keys||SUN_ALL).forEach(k=>{const v=hhmm(t[k]); if(v) parts.push(SUN_LABEL[k]+" "+v);});
   return parts.join(" · ");
 }
+/* 팝업용 2x2 — 시민박명 · 일출 / 일몰 · 저녁박명 */
+function sunGridHTML(lat,lng,when){
+  if(sunOK()&&Number.isFinite(lat)&&Number.isFinite(lng)){
+    let t=null;
+    try{ t=SunCalc.getTimes(when||new Date(),lat,lng); }catch(e){ t=null; }
+    if(t){
+      const cells=SUN_ALL.map(k=>({l:SUN_LABEL[k],v:hhmm(t[k])}));
+      if(cells.some(c=>c.v))
+        return `<div class="sun-grid">`
+          +cells.map(c=>`<div class="sun-cell"><span class="sl">${c.l}</span><b class="sv">${c.v||"—"}</b></div>`).join("")
+          +`</div>`;
+    }
+  }
+  return `<p class="sun-none">이 날짜엔 계산할 수 없어요</p>`;
+}
+
 /* 날짜 입력값(YYYY-MM-DD) → 그 날 정오. 정오로 잡아야 시간대 경계에서 하루가 밀리지 않는다. */
 function ymd(d){return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());}
 function dateFromInput(v){
@@ -1777,6 +1800,9 @@ async function initSync(){
 
 /* ============ 계획용 일출·박명 블록 + 즐겨찾기 장소 ============
    즐겨찾기는 이 기기 전용(IndexedDB favs). 서버로 올리지 않는다. */
+/* Leaflet 의 maxWidth 는 .leaflet-popup-content 기준. 그 CSS 여백(좌우 13px)을 빼야
+   화면에 보이는 팝업 전체가 260px 를 넘지 않는다. */
+const POPUP_MAX_W=234;
 let favCache=[];
 function favId(lat,lng){return lat.toFixed(5)+","+lng.toFixed(5);}
 function isFav(lat,lng){return Number.isFinite(lat)&&Number.isFinite(lng)&&favCache.some(f=>f.id===favId(lat,lng));}
@@ -1790,7 +1816,7 @@ function planBlockHTML(lat,lng,name){
   const d=tomorrowYMD(), saved=isFav(lat,lng);
   return `<div class="plan" data-lat="${lat}" data-lng="${lng}" data-name="${attr(name)}">`
     +`<input class="plan-date" type="date" value="${d}" aria-label="기준 날짜">`
-    +`<span class="plan-sun">${esc(sunTimesLine(lat,lng,dateFromInput(d))||"이 날짜엔 계산할 수 없어요")}</span>`
+    +`<div class="plan-sun">${sunGridHTML(lat,lng,dateFromInput(d))}</div>`
     +`<button class="plan-fav${saved?" on":""}" type="button">${saved?"★ 저장된 장소":"★ 즐겨찾기"}</button>`
     +`</div>`;
 }
@@ -1803,7 +1829,7 @@ function wirePlan(root){
     if(inp&&out){
       const paint=()=>{
         const d=dateFromInput(inp.value);
-        out.textContent=d?(sunTimesLine(lat,lng,d)||"이 날짜엔 계산할 수 없어요"):"날짜를 골라 주세요";
+        out.innerHTML=d?sunGridHTML(lat,lng,d):`<p class="sun-none">날짜를 골라 주세요</p>`;
       };
       inp.onchange=paint; inp.oninput=paint;
     }
@@ -1820,11 +1846,9 @@ function openSpotPopup(latlng){
   const ll=latlng.wrap?latlng.wrap():latlng;
   const lat=Math.round(ll.lat*1e5)/1e5, lng=Math.round(ll.lng*1e5)/1e5;
   const coord=fmtCoord(lat,lng);
-  const today=sunTimesLine(lat,lng,new Date(),["sunrise","sunset"]);
-  spotPopup=L.popup({maxWidth:260})
+  spotPopup=L.popup({maxWidth:POPUP_MAX_W})
     .setLatLng([lat,lng])
     .setContent(`<div class="pop"><b>${esc(coord)}</b><span>기록 없는 지점</span>`
-      +(today?`<span>☀ 오늘 ${esc(today)}</span>`:"")
       +planBlockHTML(lat,lng,coord)+`</div>`)
     .openOn(m);
   const target=spotPopup;
@@ -1964,12 +1988,10 @@ function mapMsg(t){ const el=$("#map-msg"); if(!el) return; el.textContent=t||""
 
 function pinPopup(o){
   const dt=[o.date?o.date.replace(/-/g,"."):"", o.time||""].filter(Boolean).join("  ·  ");
-  const sun=sunTimesLine(o.lat,o.lng,new Date(),["sunrise","sunset"]);   // 그 지점의 오늘 기준
   return `<div class="pop"><b>${esc(o.species||"이름 없음")}</b>`
     +(dt?`<span>${esc(dt)}</span>`:"")
     +(o.place?`<span>${esc(o.place)}</span>`:"")
     +(o.count!=null?`<span>${o.count}개체</span>`:"")
-    +(sun?`<span>☀ 오늘 ${esc(sun)}</span>`:"")
     +planBlockHTML(o.lat,o.lng,o.place||fmtCoord(o.lat,o.lng))
     +`</div>`;
 }
@@ -1991,7 +2013,7 @@ function renderMap(obs){
 
   blPins.clearLayers();
   pts.forEach(o=>{
-    L.marker([o.lat,o.lng],{icon:blPinIcon,title:o.species||""}).bindPopup(pinPopup(o)).addTo(blPins);
+    L.marker([o.lat,o.lng],{icon:blPinIcon,title:o.species||""}).bindPopup(pinPopup(o),{maxWidth:POPUP_MAX_W}).addTo(blPins);
   });
 
   // 핀 구성이 바뀐 경우에만 화면을 다시 맞춘다 (탭을 오갈 때 보던 위치가 튀지 않게)
