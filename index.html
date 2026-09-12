@@ -382,11 +382,29 @@
   .pop .sun-cell .sv{display:block;font-size:15px;font-weight:700;line-height:1.25;
     color:var(--amber-d);font-variant-numeric:tabular-nums;white-space:nowrap}
   .pop .sun-none{margin:0;font-size:11.5px;font-weight:600;color:var(--muted)}
-  .pop .plan .plan-fav{
-    align-self:flex-end;background:var(--bark);border:1.5px solid var(--line);border-radius:8px;
+  .pop .plan-acts{display:flex;align-items:center;gap:6px}
+  .pop .plan .plan-fav,.pop .plan .plan-cvs{
+    background:var(--bark);border:1.5px solid var(--line);border-radius:8px;
     padding:6px 10px;font-size:12px;font-weight:700;font-family:inherit;color:var(--muted);cursor:pointer;
+    white-space:nowrap;
   }
+  .pop .plan .plan-fav{margin-left:auto}
   .pop .plan .plan-fav.on{background:var(--amber);border-color:var(--amber);color:#fff}
+  .pop .plan .plan-cvs.on{background:#f0fbfb;border-color:#b7dcdd;color:var(--amber-d)}
+
+  /* ---- 근처 편의점 (카카오 로컬) ---- */
+  .pop .plan-cvslist[hidden]{display:none}
+  .pop .cvs-list{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .pop .cvs-row{display:flex;align-items:baseline;gap:8px;padding:7px 9px;background:#fff;
+    border-top:1px solid var(--bark-2);text-decoration:none}
+  .pop .cvs-row:first-child{border-top:none}
+  .pop .cvs-row:active{background:var(--bark)}
+  .pop .cvs-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-size:12px;font-weight:600;color:var(--cream)}
+  .pop .cvs-row .ds{font-size:11px;font-weight:700;color:var(--amber-d);
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pop .cvs-msg{margin:0;font-size:11.5px;font-weight:600;color:var(--muted);line-height:1.5}
+  .pop .cvs-src{margin:5px 0 0;font-size:10px;color:var(--muted-d)}
   .map-hint{font-size:11.5px;color:var(--muted-d);margin:7px 2px 0;line-height:1.5}
 
   /* ---- 내 탐조 장소 ---- */
@@ -659,15 +677,18 @@ let isPremium=false;
 const FREE_PHOTO_SYNC_LIMIT=30;
 
 /* ============ IndexedDB ============ */
-/* v2 에서 favs(즐겨찾기 장소) 스토어 추가 — 이 기기 전용이라 서버로 올리지 않는다 */
-const DB_NAME="deulsae", DB_VER=2, STORE="obs", FAV_STORE="favs";
+/* v2: favs(즐겨찾기 장소) · v3: cvs(근처 편의점 조회 캐시) — 둘 다 이 기기 전용, 서버로 올리지 않는다 */
+const DB_NAME="deulsae", DB_VER=3, STORE="obs", FAV_STORE="favs", CVS_STORE="cvs";
 let _db=null;
-function db(){return new Promise((res,rej)=>{if(_db)return res(_db);const r=indexedDB.open(DB_NAME,DB_VER);r.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains(STORE))d.createObjectStore(STORE,{keyPath:"id"});if(!d.objectStoreNames.contains(FAV_STORE))d.createObjectStore(FAV_STORE,{keyPath:"id"});};r.onblocked=()=>{console.warn("다른 탭이 예전 버전의 저장소를 잡고 있어요");toast("다른 탭을 닫고 새로고침해 주세요");};r.onsuccess=e=>{_db=e.target.result;res(_db)};r.onerror=e=>rej(e.target.error);});}
+function db(){return new Promise((res,rej)=>{if(_db)return res(_db);const r=indexedDB.open(DB_NAME,DB_VER);r.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains(STORE))d.createObjectStore(STORE,{keyPath:"id"});if(!d.objectStoreNames.contains(FAV_STORE))d.createObjectStore(FAV_STORE,{keyPath:"id"});if(!d.objectStoreNames.contains(CVS_STORE))d.createObjectStore(CVS_STORE,{keyPath:"id"});};r.onblocked=()=>{console.warn("다른 탭이 예전 버전의 저장소를 잡고 있어요");toast("다른 탭을 닫고 새로고침해 주세요");};r.onsuccess=e=>{_db=e.target.result;res(_db)};r.onerror=e=>rej(e.target.error);});}
 async function tx(m){return (await db()).transaction(STORE,m).objectStore(STORE);}
 async function favTx(m){return (await db()).transaction(FAV_STORE,m).objectStore(FAV_STORE);}
 async function rawFavs(){const s=await favTx("readonly");return new Promise((res,rej)=>{const r=s.getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error);});}
 async function putFav(f){const s=await favTx("readwrite");return new Promise((res,rej)=>{const r=s.put(f);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
 async function delFav(id){const s=await favTx("readwrite");return new Promise((res,rej)=>{const r=s.delete(id);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
+async function cvsTx(m){return (await db()).transaction(CVS_STORE,m).objectStore(CVS_STORE);}
+async function getCvs(id){const s=await cvsTx("readonly");return new Promise((res,rej)=>{const r=s.get(id);r.onsuccess=()=>res(r.result||null);r.onerror=()=>rej(r.error);});}
+async function putCvs(v){const s=await cvsTx("readwrite");return new Promise((res,rej)=>{const r=s.put(v);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
 async function putObs(o){const s=await tx("readwrite");return new Promise((res,rej)=>{const r=s.put(o);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
 async function delObs(id){const s=await tx("readwrite");return new Promise((res,rej)=>{const r=s.delete(id);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
 async function rawGet(id){const s=await tx("readonly");return new Promise((res,rej)=>{const r=s.get(id);r.onsuccess=()=>res(r.result||null);r.onerror=()=>rej(r.error);});}
@@ -1811,13 +1832,73 @@ async function loadFavs(){
   return favCache;
 }
 
+/* ---- 근처 편의점 (카카오 로컬 카테고리 검색 CS2) ----
+   ⚠ 이 키는 정적 페이지에 그대로 실려 공개된다. 카카오 개발자 콘솔에서
+      플랫폼 도메인을 등록해 두고, 할당량이 새면 키를 갈아 끼워야 한다. */
+const CVS_KEY="8b4e825a21e24a86fb461d07501c1ccb";
+const CVS_API="https://dapi.kakao.com/v2/local/search/category.json";
+const CVS_RADIUS=3000, CVS_SIZE=5, CVS_TTL=24*60*60*1000;   // 24시간 캐시
+function cvsCacheKey(lat,lng){return lat.toFixed(3)+","+lng.toFixed(3);}
+function fmtDist(m){return m>=1000?(m/1000).toFixed(1)+" km":Math.round(m)+" m";}
+
+/* 좌표 소수 3자리(약 100m)를 키로 24시간 캐시. 캐시가 깨져도 조회 자체는 계속되게 한다. */
+async function nearbyCVS(lat,lng){
+  const id=cvsCacheKey(lat,lng);
+  try{
+    const hit=await getCvs(id);
+    if(hit&&Array.isArray(hit.items)&&Date.now()-(hit.ts||0)<CVS_TTL) return hit.items;
+  }catch(e){ console.error("편의점 캐시 읽기",e); }
+  const url=CVS_API+"?category_group_code=CS2"
+    +"&x="+encodeURIComponent(lng)+"&y="+encodeURIComponent(lat)
+    +"&radius="+CVS_RADIUS+"&sort=distance&size="+CVS_SIZE;
+  const r=await fetch(url,{headers:{Authorization:"KakaoAK "+CVS_KEY}});
+  if(!r.ok) throw new Error("kakao "+r.status);
+  const j=await r.json();
+  const items=(j.documents||[]).slice(0,CVS_SIZE).map(d=>({
+    name:d.place_name||"이름 없음",
+    dist:parseInt(d.distance,10)||0,
+    url:d.place_url||""
+  }));
+  try{ await putCvs({id,items,ts:Date.now()}); }catch(e){ console.error("편의점 캐시 쓰기",e); }
+  return items;
+}
+function cvsListHTML(items){
+  if(!items.length) return `<p class="cvs-msg">반경 3km에 편의점이 없어요 — 출발 전에 챙기세요</p>`;
+  return `<div class="cvs-list">`+items.map(it=>{
+    const inner=`<span class="nm">${esc(it.name)}</span><span class="ds">${esc(fmtDist(it.dist))}</span>`;
+    return it.url
+      ? `<a class="cvs-row" href="${attr(it.url)}" target="_blank" rel="noopener">${inner}</a>`
+      : `<span class="cvs-row">${inner}</span>`;
+  }).join("")+`</div><p class="cvs-src">위치 정보는 카카오 기준</p>`;
+}
+/* 버튼을 다시 누르면 접는다. 한 번 받아 온 목록은 그대로 두고, 실패했을 때만 다시 조회. */
+async function toggleCVS(btn,list,lat,lng){
+  if(!list.hidden){ list.hidden=true; btn.classList.remove("on"); return; }
+  list.hidden=false; btn.classList.add("on");
+  if(list.dataset.loaded==="1") return;
+  list.innerHTML=`<p class="cvs-msg">불러오는 중…</p>`;
+  try{
+    const items=await nearbyCVS(lat,lng);
+    if(!list.isConnected) return;
+    list.innerHTML=cvsListHTML(items);
+    list.dataset.loaded="1";
+  }catch(e){
+    console.error("편의점 조회",e);
+    if(list.isConnected) list.innerHTML=`<p class="cvs-msg">지금은 조회할 수 없어요</p>`;
+  }
+}
+
 /* 팝업 안에 들어가는 "날짜 고르기 + 그 날 일출·박명 + ★" 블록 */
 function planBlockHTML(lat,lng,name){
   const d=tomorrowYMD(), saved=isFav(lat,lng);
   return `<div class="plan" data-lat="${lat}" data-lng="${lng}" data-name="${attr(name)}">`
     +`<input class="plan-date" type="date" value="${d}" aria-label="기준 날짜">`
     +`<div class="plan-sun">${sunGridHTML(lat,lng,dateFromInput(d))}</div>`
-    +`<button class="plan-fav${saved?" on":""}" type="button">${saved?"★ 저장된 장소":"★ 즐겨찾기"}</button>`
+    +`<div class="plan-acts">`
+      +`<button class="plan-cvs" type="button">🏪 근처 편의점</button>`
+      +`<button class="plan-fav${saved?" on":""}" type="button">${saved?"★ 저장된 장소":"★ 즐겨찾기"}</button>`
+    +`</div>`
+    +`<div class="plan-cvslist" hidden></div>`
     +`</div>`;
 }
 /* 팝업이 열린 뒤에 붙인다 (Leaflet 이 내용을 그때 DOM 에 넣으므로) */
@@ -1835,6 +1916,8 @@ function wirePlan(root){
     }
     const btn=box.querySelector(".plan-fav");
     if(btn) btn.onclick=()=>saveFavFrom(box,btn);
+    const cvs=box.querySelector(".plan-cvs"), clist=box.querySelector(".plan-cvslist");
+    if(cvs&&clist) cvs.onclick=()=>toggleCVS(cvs,clist,lat,lng);
   });
 }
 
