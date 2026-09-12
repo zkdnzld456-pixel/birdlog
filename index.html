@@ -2109,11 +2109,12 @@ async function removeFav(id){
   toast("즐겨찾기에서 지웠어요");
 }
 /* 통계 탭 맨 위 카드 — 날짜 하나로 전체 갱신, 항목 길게 누르면 삭제 */
-/* ============ 카카오맵 길찾기 ============
+/* ============ 카카오맵에서 보기 ============
    모바일은 앱을 먼저 부른다. 1.5초 안에 페이지가 가려지지 않으면(visibilitychange)
    앱이 없는 것으로 보고 웹 지도로 보낸다. PC 는 바로 웹 지도. */
-function kakaoWebTo(name,lat,lng){
-  return `https://map.kakao.com/link/to/${encodeURIComponent(name)},${lat},${lng}`;
+const KAKAO_LABEL="탐조지";          // 지도에 찍히는 이름
+function kakaoWebMap(lat,lng){
+  return `https://map.kakao.com/link/map/${encodeURIComponent(KAKAO_LABEL)},${lat},${lng}`;
 }
 /* 새 탭으로 연다. 팝업이 막히면 false — 그때는 부르는 쪽에서 같은 탭으로 보낸다.
    window.open 에 "noopener" 를 넘기면 성공해도 null 이 와서 막힌 건지 알 수 없으므로,
@@ -2124,8 +2125,8 @@ function openNewTab(url){
   try{ w.opener=null; }catch(e){}
   return true;
 }
-function openKakaoRoute(name,lat,lng){
-  const web=kakaoWebTo(name,lat,lng);
+function openKakaoMap(lat,lng){
+  const web=kakaoWebMap(lat,lng);
   if(!isMobile()){ if(!openNewTab(web)) location.href=web; return; }
 
   let left=false;
@@ -2136,7 +2137,7 @@ function openKakaoRoute(name,lat,lng){
     if(left||document.hidden) return;            // 앱으로 넘어갔다
     if(!openNewTab(web)) location.href=web;      // 앱이 없다 — 웹 지도로
   },1500);
-  location.href=`kakaomap://route?ep=${lat},${lng}&by=CAR`;
+  location.href=`kakaomap://look?p=${lat},${lng}`;
 }
 
 function renderFavs(){
@@ -2157,19 +2158,19 @@ function renderFavs(){
       ? (am?`<span class="r"><span class="ic">🌅</span>${esc(am)}</span>`:"")
         +(pm?`<span class="r"><span class="ic">🌇</span>${esc(pm)}</span>`:"")
       : `<span class="r">—</span>`;
-    // href 는 스크립트가 죽었을 때를 위한 웹 지도 주소. 실제 동작은 openKakaoRoute 가 정한다.
-    const web=kakaoWebTo(f.name,f.lat,f.lng);
+    // href 는 스크립트가 죽었을 때를 위한 웹 지도 주소. 실제 동작은 openKakaoMap 이 정한다.
+    const web=kakaoWebMap(f.lat,f.lng);
     return `<div class="favrow" data-id="${attr(f.id)}" title="길게 누르면 삭제">`
       +`<span class="nm">${esc(f.name)}</span>`
       +`<span class="sn">${sun}</span>`
-      +`<a class="go" href="${attr(web)}" data-name="${attr(f.name)}" data-lat="${f.lat}" data-lng="${f.lng}"`
-      +` title="카카오맵으로 길찾기" aria-label="${attr(f.name)} 카카오맵으로 길찾기">🗺️</a>`
+      +`<a class="go" href="${attr(web)}" data-lat="${f.lat}" data-lng="${f.lng}"`
+      +` title="카카오맵에서 보기" aria-label="${attr(f.name)} 카카오맵에서 보기">🗺️</a>`
       +`</div>`;
   }).join("")}</div>`;
   wrap.querySelectorAll(".favrow").forEach(r=>onLongPress(r,()=>removeFav(r.dataset.id)));
   wrap.querySelectorAll(".favrow .go").forEach(a=>a.onclick=e=>{
     e.preventDefault();
-    openKakaoRoute(a.dataset.name,parseFloat(a.dataset.lat),parseFloat(a.dataset.lng));
+    openKakaoMap(parseFloat(a.dataset.lat),parseFloat(a.dataset.lng));
   });
 }
 
