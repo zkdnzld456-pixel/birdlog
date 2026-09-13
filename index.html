@@ -243,6 +243,7 @@
   .card .photos img{width:62px;height:62px;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:block}
   .card .photos .ph{position:relative;display:inline-block}
   .card .photos img.ph-load{background:var(--bark-2);animation:phpulse 1.2s ease-in-out infinite}
+  .card .photos img.ph-fail{background:var(--bark-2);border-style:dashed}
   @keyframes phpulse{0%,100%{opacity:1}50%{opacity:.5}}
   .card .photos .phdel{
     position:absolute;top:-7px;right:-7px;width:22px;height:22px;border-radius:50%;
@@ -859,6 +860,7 @@ function dedupPhotos(obsId,list){
       if(!(q.thumb instanceof Blob)&&p.thumb instanceof Blob) q.thumb=p.thumb;
       if(!q.path&&p.path){q.path=p.path;q.uploaded=!!p.uploaded;}
       if(!q.thumbPath&&p.thumbPath) q.thumbPath=p.thumbPath;
+      if(!q.uploadedBy&&p.uploadedBy) q.uploadedBy=p.uploadedBy;
       if(p.sync) q.sync=true;
       changed=true; return;
     }
@@ -917,7 +919,16 @@ async function allObs(){return (await allRows()).filter(o=>!o.deleted);}  // 삭
 /* ============ helpers ============ */
 const $=s=>document.querySelector(s);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
-function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),1900);}
+function toast(m,ms){const t=$("#toast");t.textContent=m;t.classList.add("show");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),ms||1900);}
+/* 이 기기 id — 사진을 올린 기기를 표시해 두고, ☁ 끄기는 그 기기에서만 허용한다 */
+function deviceId(){
+  let id=null; try{ id=localStorage.getItem("bl_device_id"); }catch(e){}
+  if(!id){ id=uid(); try{ localStorage.setItem("bl_device_id",id); }catch(e){} }
+  return id;
+}
+/* 이 기기에서 ☁ 를 끌 수 있는 사진인가 — 올린 기기가 여기거나, 올린 기기 기록이 없는 예전 사진이면 압축본이 여기 있을 때 */
+function canUnsync(p){ return p.uploadedBy ? p.uploadedBy===deviceId() : (p.blob instanceof Blob); }
+const PH_FAIL_PX="data:image/svg+xml;charset=utf-8,"+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 62 62"><text x="31" y="40" text-anchor="middle" font-family="sans-serif" font-size="26" font-weight="700" fill="#859797">?</text></svg>');
 function parseTags(s){if(!s)return[];return [...new Set(s.split(/[\s,]+/).map(x=>x.replace(/^#/,"").trim()).filter(Boolean))];}
 function fmtCoord(a,b){return a.toFixed(5)+", "+b.toFixed(5);}
 function pad(n){return String(n).padStart(2,"0");}
@@ -1583,7 +1594,7 @@ function phCellHTML(o,p,i){
   const local=(p.blob instanceof Blob)||(p.thumb instanceof Blob);
   if(!local&&!p.path) return `<span class="ph ghost" title="이 기기에만 있음"><i>이 기기에만<br>있음</i></span>`;
   const on=!!p.sync;
-  const tip=on?"동기화 켜짐 · 다른 기기에서도 보여요":"동기화 꺼짐 · 이 기기에만 있어요";
+  const tip=!on?"동기화 꺼짐 · 이 기기에만 있어요":canUnsync(p)?"동기화 켜짐 · 다른 기기에서도 보여요":"다른 기기에서 올린 사진 · 그 기기에서만 끌 수 있어요";
   const sync=sbUser?`<button class="phsync${on?" on":""}" data-id="${o.id}" data-phid="${p.id}" title="${tip}" aria-label="사진 동기화">☁</button>`:"";
   return `<span class="ph"><img data-ph="${i}" alt="사진">${sync}<button class="phdel" data-id="${o.id}" data-phid="${p.id}" aria-label="사진 삭제">✕</button></span>`;
 }
@@ -1616,13 +1627,15 @@ async function togglePhotoSync(obsId,phId){
     await saveObs(o);
     toast(navigator.onLine?"동기화 켬 · 곧 올라가요":"동기화 켬 · 연결되면 올라가요");
   }else{
-    if(!(p.blob instanceof Blob)){            // 서버에만 있던 사진은 먼저 받아 둬야 안 잃는다
+    // 다른 기기가 올린 사진은 여기서 끄지 않는다 — 압축본이 그 기기에만 있어 끄는 순간 사진이 사라진다
+    if(!canUnsync(p)){ toast("다른 기기에서 올린 사진이에요. 그 기기에서 끄거나 여기서 삭제(✕)할 수 있어요.",3600); return; }
+    if(!(p.blob instanceof Blob)){            // 올린 기기인데 압축본이 없다면(지워졌다면) 먼저 받아 둔다
       await fetchPhoto(obsId,p,null);
       if(!(p.blob instanceof Blob)){ toast("사진을 먼저 내려받아야 해요 · 연결을 확인해 주세요"); return; }
     }
     if(!(p.thumb instanceof Blob)) p.thumb=await makeThumb(p.blob);
     queuePhotoPaths(p);
-    p.sync=false; p.uploaded=false; p.path=null; p.thumbPath=null;
+    p.sync=false; p.uploaded=false; p.path=null; p.thumbPath=null; p.uploadedBy=null;
     await saveObs(o);
     toast("동기화 끔 · 이 기기에만 남아요");
   }
@@ -1913,7 +1926,13 @@ const SB_TABLE="observations";
 const SB_BASE_COLS="id,species,date,time,lat,lng,acc,place,count,tags,memo,photos,created,updated_at";
 /* 나중에 추가된 컬럼 — 서버에 아직 없으면(SQL 을 안 돌렸으면) 이 컬럼만 빼고 동기화한다.
    컬럼 하나 때문에 기록 전체가 안 올라가는 일은 없어야 한다. */
-const SB_OPT_COLS=["lifer","orig_lat","orig_lng"];
+const SB_OPT_COLS=["lifer","orig_lat","orig_lng","photo_meta"];
+/* photo_meta: { "<사진 id>": { by: "<올린 기기 id>" } } — 올라간 사진만 */
+function photoMeta(list){
+  const m={};
+  (list||[]).forEach(p=>{ if(p&&p.uploaded&&p.path&&p.uploadedBy) m[p.id]={by:p.uploadedBy}; });
+  return m;
+}
 const sbMissing=new Set();
 function sbCols(){return [SB_BASE_COLS].concat(SB_OPT_COLS.filter(c=>!sbMissing.has(c))).join(",");}
 /* PostgREST: select 에 없는 컬럼 → 42703 "column ... does not exist",
@@ -1981,10 +2000,11 @@ function toRemote(o){
     count:o.count??null,tags:Array.isArray(o.tags)?o.tags:[],memo:o.memo||"",
     lifer:normLiferVal(o.lifer),
     photos:dedupPhotos(o.id,o.photos).list.map(p=>(p.uploaded&&p.path)?p.path:LOCAL_MARK+p.id),
+    photo_meta:photoMeta(dedupPhotos(o.id,o.photos).list),
     created:o.created||Date.now(),updated_at:o.updated_at||new Date().toISOString()};
 }
 function fromRemote(r,local){
-  const photos=mergePhotos(r.photos,local,r.id);
+  const photos=mergePhotos(r.photos,local,r.id,r.photo_meta);
   const o={id:r.id,species:r.species||"",
     date:r.date||"",time:(r.time||"").slice(0,5),
     lat:r.lat??null,lng:r.lng??null,acc:r.acc??null,place:r.place??null,
@@ -2007,7 +2027,8 @@ function stamp(v){const t=Date.parse(v||"");return isNaN(t)?0:t;}
 /* 서버 목록 + 로컬 사진 합치기 — 받아 둔 blob/thumb 은 그대로 재사용.
    local: 표식은 "다른 기기에만 있는 사진" — 이 기기엔 파일이 없으니 자리표시자로 남는다.
    같은 id 는 한 번만 넣고(seen), 다른 기록 id 가 박힌 경로는 건너뛴다. */
-function mergePhotos(entries,local,obsId){
+function mergePhotos(entries,local,obsId,meta){
+  meta=(meta&&typeof meta==="object")?meta:{};
   const cur=(local&&local.photos)||[], byId={}, byPath={};
   cur.forEach(p=>{if(p.id)byId[p.id]=p;if(p.path)byPath[p.path]=p;});
   const seen=new Set(), out=[];
@@ -2018,8 +2039,8 @@ function mergePhotos(entries,local,obsId){
       if(!id||seen.has(id)) return;
       seen.add(id);
       const ex=byId[id];
-      out.push(ex?{...ex,sync:false,uploaded:false,path:null,thumbPath:null}
-                 :{id,blob:null,thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});
+      out.push(ex?{...ex,sync:false,uploaded:false,path:null,thumbPath:null,uploadedBy:null}
+                 :{id,blob:null,thumb:null,path:null,thumbPath:null,uploaded:false,sync:false,uploadedBy:null});
       return;
     }
     if(!photoBelongs(obsId,entry)){console.warn("다른 기록의 사진 경로는 건너뜀",obsId,entry);return;}
@@ -2027,8 +2048,9 @@ function mergePhotos(entries,local,obsId){
     if(seen.has(id)) return;
     seen.add(id);
     const base=ex||byId[id];
-    out.push(base?{...base,id,path:entry,thumbPath:base.thumbPath||thumbOf(entry),uploaded:true,sync:true}
-                 :{id,blob:null,thumb:null,path:entry,thumbPath:thumbOf(entry),uploaded:true,sync:true});
+    const by=(meta[id]&&typeof meta[id].by==="string"&&meta[id].by)||(base&&base.uploadedBy)||null;
+    out.push(base?{...base,id,path:entry,thumbPath:base.thumbPath||thumbOf(entry),uploaded:true,sync:true,uploadedBy:by}
+                 :{id,blob:null,thumb:null,path:entry,thumbPath:thumbOf(entry),uploaded:true,sync:true,uploadedBy:by});
   });
   // 아직 서버에 알리지 못한 이 기기의 사진(올린 적 없는 것)만 그대로 유지.
   // 올렸던 사진이 서버 목록에서 빠졌다면 다른 기기에서 지운 것이다 — 되살리면 파일 없는 경로가
@@ -2160,7 +2182,7 @@ async function uploadPhotos(){
         const {error}=await sbClient().storage.from(PH_BUCKET)
           .upload(path,p.blob,{contentType:p.blob.type||"image/jpeg",upsert:true});
         if(error){console.error("photo upload",error);continue;}   // 실패는 다음 동기화에 재시도
-        rec.path=path;
+        rec.path=path; rec.by=deviceId();
       }
       const thumb=(p.thumb instanceof Blob)?p.thumb:await makeThumb(p.blob);
       if(thumb){
@@ -2178,7 +2200,7 @@ async function uploadPhotos(){
       const d=done[p.id];
       if(!d) return p;
       const n={...p};
-      if(d.path){n.path=d.path;n.uploaded=true;}
+      if(d.path){n.path=d.path;n.uploaded=true;n.uploadedBy=d.by;}
       if(d.thumbPath) n.thumbPath=d.thumbPath;
       if(d.thumb&&!(n.thumb instanceof Blob)) n.thumb=d.thumb;
       return n;
@@ -2199,7 +2221,7 @@ async function dropGhostPhoto(obsId,phId){
   const cur=await getObs(obsId); if(!cur) return false;
   const i=(cur.photos||[]).findIndex(p=>p.id===phId); if(i<0) return false;
   const p=cur.photos[i];
-  if(p.blob instanceof Blob){ p.path=null; p.thumbPath=null; p.uploaded=false; }
+  if(p.blob instanceof Blob){ p.path=null; p.thumbPath=null; p.uploaded=false; p.uploadedBy=null; }
   else cur.photos.splice(i,1);
   await saveObs(cur);
   console.info("유령 사진 정리",obsId,phId);
@@ -2294,7 +2316,11 @@ async function fetchThumb(obsId,ph,img){
     if(img&&img.isConnected){img.src=URL.createObjectURL(blob);img.classList.remove("ph-load");}
   }catch(e){
     if(isNotFound(e)){ if(await dropGhostPhoto(obsId,ph.id)) renderAll(); }   // 썸네일도 압축본도 없다 = 유령
-    else console.error("thumb download",e);
+    else{
+      console.error("thumb download",e);
+      // 지금은 못 받았다(연결 문제 등) — 빙빙 도는 회색 대신 "?" 로. 다음에 그릴 때 다시 시도한다
+      if(img&&img.isConnected){img.src=PH_FAIL_PX;img.classList.remove("ph-load");img.classList.add("ph-fail");img.title="지금은 불러올 수 없어요";}
+    }
   }
   finally{ phFetching.delete(key); }
 }
