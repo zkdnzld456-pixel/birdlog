@@ -888,7 +888,8 @@ function normPhotos(o){
   return changed||d.changed||o.photos.length!==before;
 }
 /* 한 번만: 이미 증식·오염된 기록을 정리하고, 바뀐 기록은 dirty 로 표시해 서버 행도 고쳐지게 한다.
-   같은 사진 id 중복 제거 + 다른 기록 id 가 박힌 경로 제거. 남의 기록 파일은 서버에서 지우지 않는다. */
+   같은 사진 id 중복 제거 + 다른 기록 id 가 박힌 경로 제거. 남의 기록 파일은 서버에서 지우지 않는다.
+   파일이 없는 경로(유령)는 서버를 물어봐야 알 수 있어 fixGhostPhotosOnce(첫 동기화 뒤) 가 맡는다. */
 async function fixPhotosOnce(force){
   const KEY="bl_ph_fix_1";
   try{ if(!force&&localStorage.getItem(KEY)) return 0; }catch(e){}
@@ -1937,7 +1938,8 @@ function sbClient(){
 }
 
 /* --- 쓰기는 언제나 로컬 먼저, 그 다음 서버로 --- */
-function touch(o){o.updated_at=new Date().toISOString();o.dirty=true;return o;}
+/* 고친 시각은 언제나 고치기 전 판보다 뒤여야 한다 — 다른 기기 시계가 앞서 있어도 이 편집이 이긴다 */
+function touch(o){o.updated_at=new Date(Math.max(Date.now(),stamp(o.updated_at)+1)).toISOString();o.dirty=true;return o;}
 async function saveObs(o){await putObs(touch(o));scheduleSync();}
 async function removeObs(id){
   const o=await getObs(id);
@@ -2028,8 +2030,14 @@ function mergePhotos(entries,local,obsId){
     out.push(base?{...base,id,path:entry,thumbPath:base.thumbPath||thumbOf(entry),uploaded:true,sync:true}
                  :{id,blob:null,thumb:null,path:entry,thumbPath:thumbOf(entry),uploaded:true,sync:true});
   });
-  // 아직 서버에 알리지 못한 이 기기의 사진은 그대로 유지
-  cur.forEach(p=>{if(!seen.has(p.id)&&(p.blob instanceof Blob||p.thumb instanceof Blob))out.push(p);});
+  // 아직 서버에 알리지 못한 이 기기의 사진(올린 적 없는 것)만 그대로 유지.
+  // 올렸던 사진이 서버 목록에서 빠졌다면 다른 기기에서 지운 것이다 — 되살리면 파일 없는 경로가
+  // 다시 서버로 올라가 유령(빈 자리표시자)이 된다.
+  cur.forEach(p=>{
+    if(seen.has(p.id)) return;
+    if(p.path||p.uploaded) return;
+    if(p.blob instanceof Blob||p.thumb instanceof Blob) out.push(p);
+  });
   return dedupPhotos(obsId,out).list;
 }
 
@@ -2179,6 +2187,48 @@ async function uploadPhotos(){
   }
 }
 
+/* Storage 에 파일이 없다(404) — 다른 기기에서 지운 사진의 경로만 남은 것 */
+function isNotFound(e){
+  if(!e) return false;
+  const st=e.status||e.statusCode, m=String(e.message||"");
+  return String(st)==="404"||/not found|404/i.test(m);
+}
+/* 유령 정리: 파일 없는 경로는 목록에서 뺀다. 이 기기에 압축본이 있으면 지우지 않고
+   "안 올라간 사진" 으로 되돌려 다음 동기화 때 다시 올린다. 바뀐 기록은 dirty 로 서버에도 반영. */
+async function dropGhostPhoto(obsId,phId){
+  const cur=await getObs(obsId); if(!cur) return false;
+  const i=(cur.photos||[]).findIndex(p=>p.id===phId); if(i<0) return false;
+  const p=cur.photos[i];
+  if(p.blob instanceof Blob){ p.path=null; p.thumbPath=null; p.uploaded=false; }
+  else cur.photos.splice(i,1);
+  await saveObs(cur);
+  console.info("유령 사진 정리",obsId,phId);
+  return true;
+}
+/* 한 번만(로그인 뒤 첫 동기화 끝에): 경로는 있는데 Storage 에 파일이 없는 사진을 기록마다 훑어 정리한다.
+   기록 폴더(userId/obsId)를 한 번씩 list 해서 파일 이름과 맞춰 본다. 콘솔에서 fixGhostPhotosOnce(true) 로 다시 돌릴 수 있다.
+   local:<id> 자리표시자(다른 기기에만 있는 사진)는 그 기기에 아직 있는지 알 수 없어 여기서는 건드리지 않는다. */
+async function fixGhostPhotosOnce(force){
+  const KEY="bl_ph_ghost_1";
+  try{ if(!force&&localStorage.getItem(KEY)) return 0; }catch(e){}
+  if(!sbClient()||!sbUser||!navigator.onLine) return 0;
+  let n=0, failed=false;
+  for(const o of await allRows()){
+    if(o.deleted) continue;
+    const cands=(o.photos||[]).filter(p=>p&&p.path&&phIsMine(p));
+    if(!cands.length) continue;
+    const {data,error}=await sbClient().storage.from(PH_BUCKET).list(sbUser.id+"/"+o.id,{limit:1000});
+    if(error){console.error("ghost list",error);failed=true;continue;}
+    const names=new Set((data||[]).map(f=>f.name));
+    for(const p of cands){
+      if(names.has(p.path.split("/").pop())) continue;
+      if(await dropGhostPhoto(o.id,p.id)) n++;
+    }
+  }
+  if(!failed){ try{ localStorage.setItem(KEY,"1"); }catch(e){} }
+  if(n){ console.info("유령 사진 정리: "+n+"건"); await renderAll(); }
+  return n;
+}
 /* 다른 기기에서 올린 사진을 필요할 때 받아 로컬에 캐시 */
 async function fetchPhoto(obsId,ph,img){
   if(!ph||!ph.path||ph.blob instanceof Blob) return;
@@ -2197,7 +2247,10 @@ async function fetchPhoto(obsId,ph,img){
       if(t&&!(t.blob instanceof Blob)){t.blob=data;t.uploaded=true;t.path=ph.path;await putObs(cur);}
     }
     if(img&&img.isConnected){img.src=URL.createObjectURL(data);img.classList.remove("ph-load");}
-  }catch(e){ console.error("photo download",e); }
+  }catch(e){
+    if(isNotFound(e)){ if(await dropGhostPhoto(obsId,ph.id)) renderAll(); }
+    else console.error("photo download",e);
+  }
   finally{ phFetching.delete(key); }
 }
 
@@ -2239,7 +2292,10 @@ async function fetchThumb(obsId,ph,img){
       }
     }
     if(img&&img.isConnected){img.src=URL.createObjectURL(blob);img.classList.remove("ph-load");}
-  }catch(e){ console.error("thumb download",e); }
+  }catch(e){
+    if(isNotFound(e)){ if(await dropGhostPhoto(obsId,ph.id)) renderAll(); }   // 썸네일도 압축본도 없다 = 유령
+    else console.error("thumb download",e);
+  }
   finally{ phFetching.delete(key); }
 }
 
@@ -2254,6 +2310,7 @@ async function syncNow(){
     await uploadPhotos();
     await pushLocal();
     await flushPhotoRemovals();
+    await fixGhostPhotosOnce();       // 한 번만 — 파일 없는 경로 정리 (바뀐 기록은 다음 동기화 때 올라간다)
   }catch(e){console.error("sync",e);}
   syncBusy=false;
   if(changed){await refreshSpeciesList();await renderAll();}
