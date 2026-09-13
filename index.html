@@ -464,6 +464,33 @@
   .favempty{background:var(--bark);border:1.5px dashed var(--line);border-radius:11px;
     padding:20px 16px;text-align:center;font-size:12.5px;color:var(--muted);line-height:1.6}
 
+  /* ---- 종추 (처음 본 종) ---- 사용자가 직접 켜고, 나중에 번복할 수 있다 */
+  .lifer-btn{
+    display:inline-flex;align-items:center;gap:6px;margin-top:8px;
+    background:var(--bark);border:1.5px solid var(--line);border-radius:20px;
+    padding:7px 13px;font-size:13px;font-weight:700;font-family:inherit;color:var(--muted);cursor:pointer;
+  }
+  .lifer-btn:active{transform:scale(.97)}
+  .lifer-btn.yes{background:var(--amber);border-color:var(--amber);color:#fff;box-shadow:0 2px 8px rgba(15,154,163,.3)}
+  .lifer-btn.maybe{background:#e8eeee;border-color:#c4d2d2;color:#566565}
+  .lifer-hint{font-size:12px;color:var(--muted);margin:6px 2px 0;line-height:1.5}
+  .lifer-hint[hidden]{display:none}
+  .lifer-hint .warn{color:#a4602f;font-weight:600}
+  /* 목록 카드 종명 옆 뱃지 */
+  .lbadge{flex:none;align-self:center;font-size:11px;font-weight:800;letter-spacing:.3px;
+    padding:2px 7px;border-radius:6px;background:var(--amber);color:#fff;white-space:nowrap}
+  .lbadge.maybe{background:#e8eeee;color:#566565}
+  /* 라이프리스트·종별 칩 — 종추 기록이 있는 종 */
+  .lstar{font-style:normal;color:var(--amber);margin-right:3px}
+  .chip.sp .lstar{color:inherit}
+  /* 저장 직후 1.5초 축하 화면 — 조작은 막지 않는다 */
+  #lifer-fx{position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:var(--amber);color:#fff;text-align:center;padding:24px;pointer-events:none;
+    opacity:0;transition:opacity .25s}
+  #lifer-fx.show{opacity:1}
+  #lifer-fx b{font-size:36px;font-weight:800;letter-spacing:1px}
+  #lifer-fx span{margin-top:12px;font-family:"Gowun Batang",serif;font-weight:700;font-size:28px;word-break:keep-all}
+
   #toast{
     position:fixed;left:50%;bottom:98px;transform:translateX(-50%) translateY(20px);
     background:#16302f;color:#ffffff;padding:12px 20px;border-radius:24px;
@@ -509,6 +536,8 @@
       <label class="lab" for="species">종명</label>
       <input id="species" list="sp-list" autocomplete="off" placeholder="예: 물총새" enterkeyhint="next">
       <datalist id="sp-list"></datalist>
+      <button type="button" class="lifer-btn" id="lifer-btn" aria-pressed="false">종추 표시</button>
+      <p class="lifer-hint" id="lifer-hint" hidden></p>
     </div>
 
     <div class="field">
@@ -613,6 +642,7 @@
 </nav>
 
 <div id="toast"></div>
+<div id="lifer-fx" aria-live="polite"><b>🎉 종추!</b><span id="lifer-fx-sp"></span></div>
 
 <div id="lightbox" class="lb" style="display:none">
   <img id="lb-img" alt="사진 크게 보기">
@@ -629,6 +659,8 @@
       <div class="field">
         <label class="lab" for="ed-species">종명</label>
         <input id="ed-species" list="sp-list" autocomplete="off">
+        <button type="button" class="lifer-btn" id="ed-lifer-btn" aria-pressed="false">종추 표시</button>
+        <p class="lifer-hint" id="ed-lifer-hint" hidden></p>
       </div>
       <p class="ed-loc" id="ed-loc"></p>
       <div class="row">
@@ -754,8 +786,13 @@ function normPhotos(o){
   }).filter(p=>p&&typeof p==="object"&&(p.id||p.path));
   return changed||o.photos.length!==before;
 }
-async function getObs(id){const o=await rawGet(id);if(o&&normPhotos(o))await putObs(o);return o;}
-async function allRows(){const rows=await rawAll();for(const o of rows){if(normPhotos(o))await putObs(o);}return rows;}
+/* 종추: 'no' | 'yes' | 'maybe'. 예전 기록이나 서버에서 온 값이 비어 있으면 'no'. */
+const LIFER_VALS=["no","yes","maybe"];
+function normLiferVal(v){return LIFER_VALS.includes(v)?v:"no";}
+function normLifer(o){const v=normLiferVal(o.lifer);if(o.lifer===v)return false;o.lifer=v;return true;}
+function normObs(o){const a=normPhotos(o),b=normLifer(o);return a||b;}
+async function getObs(id){const o=await rawGet(id);if(o&&normObs(o))await putObs(o);return o;}
+async function allRows(){const rows=await rawAll();for(const o of rows){if(normObs(o))await putObs(o);}return rows;}
 async function allObs(){return (await allRows()).filter(o=>!o.deleted);}  // 삭제 표시(묘비)는 화면에서 제외
 
 /* ============ helpers ============ */
@@ -880,17 +917,71 @@ function fillNow(){const d=new Date();$("#date").value=d.getFullYear()+"-"+pad(d
 /* ============ autocomplete ============ */
 async function refreshSpeciesList(){const obs=await allObs();const names=[...new Set(obs.map(o=>o.species).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"ko"));$("#sp-list").innerHTML=names.map(n=>`<option value="${n.replace(/"/g,"&quot;")}">`).join("");}
 
+/* ============ 종추 (처음 본 종) ============
+   탭할 때마다 꺼짐 → 종추 → 종추? → 꺼짐. 앱은 판단하지 않고 안내만 한다. */
+const LIFER_NEXT={no:"yes",yes:"maybe",maybe:"no"};
+const LIFER_LABEL={no:"종추 표시",yes:"🎉 종추",maybe:"종추?"};
+function paintLiferBtn(btn,v){
+  if(!btn) return;
+  btn.className="lifer-btn"+(v==="no"?"":" "+v);
+  btn.textContent=LIFER_LABEL[v];
+  btn.setAttribute("aria-pressed",v==="no"?"false":"true");
+}
+/* 같은 종을 이미 기록한 적 있으면 가장 이른 날짜(YYYY.MM.DD). 삭제된 기록은 뺀다. */
+async function firstSeenDate(species,skipId){
+  const name=(species||"").trim(); if(!name) return null;
+  let first="";
+  (await allObs()).forEach(o=>{
+    if(o.id===skipId||o.species!==name||!o.date) return;
+    if(!first||o.date<first) first=o.date;
+  });
+  return first?first.replace(/-/g,"."):null;
+}
+function liferBadge(v){
+  return v==="yes"?`<span class="lbadge">종추</span>`:v==="maybe"?`<span class="lbadge maybe">종추?</span>`:"";
+}
+/* 'yes' 기록이 하나라도 있는 종 — 라이프리스트·종별 칩의 별 */
+function liferSpeciesSet(obs){const s=new Set();obs.forEach(o=>{if(o.lifer==="yes"&&o.species)s.add(o.species);});return s;}
+let liferFxTimer=null;
+function showLiferFx(species){
+  const el=$("#lifer-fx"); if(!el) return;
+  $("#lifer-fx-sp").textContent=species||"";
+  el.classList.add("show");
+  clearTimeout(liferFxTimer);
+  liferFxTimer=setTimeout(()=>el.classList.remove("show"),1500);
+}
+
+/* 기록 화면 토글 */
+let logLifer="no";
+async function paintLogLifer(){
+  const v=logLifer;
+  paintLiferBtn($("#lifer-btn"),v);
+  const hint=$("#lifer-hint");
+  if(v==="no"){hint.hidden=true;hint.textContent="";return;}
+  const d=await firstSeenDate($("#species").value,null);
+  if(v!==logLifer) return;                       // 기다리는 사이 토글이 또 바뀌었다
+  hint.textContent=d?`이 종은 ${d}에 기록한 적 있어요`:"";
+  hint.hidden=!d;
+}
+$("#lifer-btn").onclick=()=>{logLifer=LIFER_NEXT[logLifer];paintLogLifer();};
+$("#species").addEventListener("input",()=>{if(logLifer!=="no")paintLogLifer();});
+
 /* ============ save ============ */
 $("#save").onclick=async()=>{
   const species=$("#species").value.trim();
   if(!species){toast("종명을 입력해 주세요");$("#species").focus();return;}
+  const lifer=logLifer;
   const o={id:uid(),species,date:$("#date").value,time:$("#time").value,
     lat:curPos?curPos.lat:null,lng:curPos?curPos.lng:null,acc:curPos?curPos.acc:null,place:curPlace,
     count:$("#count").value?parseInt($("#count").value,10):null,
-    tags:parseTags($("#tags").value),memo:$("#memo").value.trim(),photos:[],created:Date.now()};
+    tags:parseTags($("#tags").value),memo:$("#memo").value.trim(),photos:[],lifer,created:Date.now()};
   try{
-    await saveObs(o);toast("저장됐어요 · "+species);
+    await saveObs(o);
+    if(lifer==="yes") showLiferFx(species);          // 순번은 붙이지 않는다
+    else if(lifer==="maybe") toast("종추? 로 저장했어요");
+    else toast("저장됐어요 · "+species);
     $("#species").value="";$("#count").value="";$("#tags").value="";$("#memo").value="";
+    logLifer="no";paintLogLifer();
     fillNow();grabGPS();await refreshSpeciesList();await renderAll();$("#species").focus();
   }catch(e){toast("저장 실패 — 저장공간을 확인해 주세요");console.error(e);}
 };
@@ -904,10 +995,11 @@ async function renderAll(){
   $("#tally-sp").textContent=spSet.length;
   $("#tally-n").textContent=obs.length;
 
-  // 종별 칩
+  // 종별 칩 — 종추 기록이 있는 종은 ★
   const spCount={};obs.forEach(o=>{if(o.species)spCount[o.species]=(spCount[o.species]||0)+1;});
+  const liferSp=liferSpeciesSet(obs);
   const sps=Object.keys(spCount).sort((a,b)=>spCount[b]-spCount[a]||a.localeCompare(b,"ko"));
-  $("#spchips").innerHTML=sps.map(s=>`<span class="chip sp${activeSpecies===s?' on':''}" data-sp="${esc(s)}">${esc(s)} ${spCount[s]}</span>`).join("");
+  $("#spchips").innerHTML=sps.map(s=>`<span class="chip sp${activeSpecies===s?' on':''}" data-sp="${esc(s)}">${liferSp.has(s)?'<i class="lstar">★</i>':''}${esc(s)} ${spCount[s]}</span>`).join("");
   $("#spchips").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{activeSpecies=activeSpecies===c.dataset.sp?null:c.dataset.sp;renderAll();});
 
   // 태그 칩
@@ -949,7 +1041,7 @@ async function renderList(obsIn){
     const ct=o.count!=null?`${o.count}개체`:"";
     const tags=o.tags.map(t=>`<span>#${t}</span>`).join("");
     return `<div class="card" data-id="${o.id}">
-      <div class="top"><span class="sp">${esc(o.species)}</span>${ct?`<span class="ct">${ct}</span>`:""}</div>
+      <div class="top"><span class="sp">${esc(o.species)}</span>${liferBadge(o.lifer)}${ct?`<span class="ct">${ct}</span>`:""}</div>
       <div class="meta">${dt} ${loc}</div>
       ${o.lat!=null?`<div class="geo"><span class="coord">${o.lat.toFixed(5)}, ${o.lng.toFixed(5)}</span><button class="cpgeo" data-lat="${o.lat}" data-lng="${o.lng}">좌표 복사</button><a class="mapgeo" href="https://www.google.com/maps/search/?api=1&query=${o.lat},${o.lng}" target="_blank" rel="noopener">구글맵</a></div>`:""}
       ${o.memo?`<div class="memo">${esc(o.memo)}</div>`:""}
@@ -973,13 +1065,32 @@ async function renderList(obsIn){
 }
 
 /* ============ 기록 수정 ============ */
-let editId=null;
+let editId=null, editLifer="no", editSpecies0="";
+/* 수정 화면 토글 — 종명을 바꿔도 종추 상태는 그대로 두고, 확인만 권한다 */
+async function paintEdLifer(){
+  const v=editLifer, id=editId;
+  paintLiferBtn($("#ed-lifer-btn"),v);
+  const hint=$("#ed-lifer-hint"), name=$("#ed-species").value.trim();
+  const lines=[];
+  if(name&&name!==editSpecies0) lines.push(`<span class="warn">종명이 바뀌었어요. 종추 표시를 확인해 주세요</span>`);
+  if(v!=="no"){
+    const d=await firstSeenDate(name,id);
+    if(v!==editLifer||id!==editId) return;
+    if(d) lines.push(`이 종은 ${d}에 기록한 적 있어요`);
+  }
+  hint.innerHTML=lines.join("<br>");
+  hint.hidden=!lines.length;
+}
+$("#ed-lifer-btn").onclick=()=>{editLifer=LIFER_NEXT[editLifer];paintEdLifer();};
+$("#ed-species").addEventListener("input",()=>{if(editId)paintEdLifer();});
 async function openEditor(id){
   const obs=await allObs();
   const o=obs.find(x=>x.id===id);
   if(!o) return;
   editId=id;
+  editLifer=normLiferVal(o.lifer); editSpecies0=o.species||"";
   $("#ed-species").value=o.species||"";
+  paintEdLifer();
   $("#ed-date").value=o.date||"";
   $("#ed-time").value=o.time||"";
   $("#ed-count").value=(o.count!=null)?o.count:"";
@@ -1005,6 +1116,7 @@ $("#ed-save").onclick=async()=>{
   o.count=$("#ed-count").value?parseInt($("#ed-count").value,10):null;
   o.tags=parseTags($("#ed-tags").value);
   o.memo=$("#ed-memo").value.trim();
+  o.lifer=editLifer;
   try{
     await saveObs(o);
     closeEditor();
@@ -1453,7 +1565,7 @@ function blobToDataURL(b){return new Promise(r=>{const fr=new FileReader();fr.on
 function dataURLtoBlob(d){const[h,b]=d.split(",");const mime=(h.match(/:(.*?);/)||[])[1]||"image/jpeg";const bin=atob(b);const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return new Blob([u8],{type:mime});}
 function today(){const d=new Date();return d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate());}
 $("#exp-json").onclick=async()=>{const obs=await allObs();const out=[];for(const o of obs){const photos=[];for(const p of (o.photos||[])){if(p&&p.blob instanceof Blob)photos.push(await blobToDataURL(p.blob));}out.push({...o,photos});}download("Birdlog_백업_"+today()+".json",new Blob([JSON.stringify(out,null,2)],{type:"application/json"}));};
-$("#exp-csv").onclick=async()=>{const obs=await allObs();const head=["종명","날짜","시간","지명","위도","경도","개체수","해시태그","메모","사진수"];const e=v=>`"${String(v??"").replace(/"/g,'""')}"`;const lines=[head.join(",")];obs.sort((a,b)=>obsDate(b)-obsDate(a)).forEach(o=>{lines.push([o.species,o.date,o.time,o.place??"",o.lat??"",o.lng??"",o.count??"",o.tags.map(t=>"#"+t).join(" "),o.memo,o.photos.length].map(e).join(","));});download("Birdlog_"+today()+".csv",new Blob(["\uFEFF"+lines.join("\n")],{type:"text/csv"}));};
+$("#exp-csv").onclick=async()=>{const obs=await allObs();const head=["종명","날짜","시간","지명","위도","경도","개체수","해시태그","메모","사진수","종추"];const e=v=>`"${String(v??"").replace(/"/g,'""')}"`;const lines=[head.join(",")];obs.sort((a,b)=>obsDate(b)-obsDate(a)).forEach(o=>{lines.push([o.species,o.date,o.time,o.place??"",o.lat??"",o.lng??"",o.count??"",o.tags.map(t=>"#"+t).join(" "),o.memo,o.photos.length,o.lifer==="yes"?"종추":o.lifer==="maybe"?"종추?":""].map(e).join(","));});download("Birdlog_"+today()+".csv",new Blob(["\uFEFF"+lines.join("\n")],{type:"text/csv"}));};
 $("#imp-json").onclick=()=>{$("#importfile").value="";$("#importfile").click();};
 $("#importfile").onchange=async e=>{
   const f=e.target.files[0];if(!f)return;
@@ -1468,7 +1580,7 @@ $("#importfile").onchange=async e=>{
         else if(p instanceof Blob)photos.push({id:uid(),blob:p,thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});
         else if(p&&typeof p==="object"&&p.blob instanceof Blob)photos.push({id:p.id||uid(),blob:p.blob,thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});
       }
-      await saveObs({...rec,photos,tags:Array.isArray(rec.tags)?rec.tags:[],id:rec.id||uid()});
+      await saveObs({...rec,photos,tags:Array.isArray(rec.tags)?rec.tags:[],lifer:normLiferVal(rec.lifer),id:rec.id||uid()});
       n++;
     }
     await refreshSpeciesList();await renderAll();toast(n+"건 불러왔어요");
@@ -1479,7 +1591,7 @@ $("#importfile").onchange=async e=>{
 const SB_URL="https://wmbmkwkyvbqlelcmrroh.supabase.co";
 const SB_KEY="sb_publishable__CEtK43l-PlF6unAsLuEwQ_boEmL4ZQ";
 const SB_TABLE="observations";
-const SB_COLS="id,species,date,time,lat,lng,acc,place,count,tags,memo,photos,created,updated_at";
+const SB_COLS="id,species,date,time,lat,lng,acc,place,count,tags,memo,photos,lifer,created,updated_at";
 let sb=null, sbUser=null, syncBusy=false, syncAgain=false, syncTimer=null;
 
 function sbClient(){
@@ -1529,6 +1641,7 @@ function toRemote(o){
     date:o.date||null,time:o.time||null,
     lat:o.lat??null,lng:o.lng??null,acc:o.acc??null,place:o.place??null,
     count:o.count??null,tags:Array.isArray(o.tags)?o.tags:[],memo:o.memo||"",
+    lifer:normLiferVal(o.lifer),
     photos:(o.photos||[]).map(p=>(p.uploaded&&p.path)?p.path:LOCAL_MARK+p.id),
     created:o.created||Date.now(),updated_at:o.updated_at||new Date().toISOString()};
 }
@@ -1537,6 +1650,7 @@ function fromRemote(r,local){
     date:r.date||"",time:(r.time||"").slice(0,5),
     lat:r.lat??null,lng:r.lng??null,acc:r.acc??null,place:r.place??null,
     count:r.count??null,tags:Array.isArray(r.tags)?r.tags:[],memo:r.memo||"",
+    lifer:normLiferVal(r.lifer),
     photos:mergePhotos(r.photos,local),created:Number(r.created)||Date.now(),
     updated_at:r.updated_at||new Date().toISOString(),dirty:false,deleted:false,remote:true};
 }
@@ -2313,13 +2427,16 @@ async function renderStats(obsIn){
   const now=new Date(), yr=String(now.getFullYear());
   const num=v=>v.toLocaleString("ko-KR");
 
-  // 요약
-  const sp=new Set(), yrSp=new Set(); let yrN=0;
+  // 요약 — 올해 종추는 lifer 'yes' 기록의 종 수 (같은 종은 1, '종추?'는 뺀다)
+  const sp=new Set(), yrSp=new Set(), yrLifer=new Set(); let yrN=0;
   obs.forEach(o=>{
     if(o.species) sp.add(o.species);
-    if((o.date||"").slice(0,4)===yr){yrN++;if(o.species)yrSp.add(o.species);}
+    if((o.date||"").slice(0,4)===yr){
+      yrN++;
+      if(o.species){yrSp.add(o.species);if(o.lifer==="yes")yrLifer.add(o.species);}
+    }
   });
-  $("#st-sum").innerHTML=[["총 종수",sp.size],["총 기록",obs.length],["올해 종수",yrSp.size],["올해 기록",yrN]]
+  $("#st-sum").innerHTML=[["총 종수",sp.size],["총 기록",obs.length],["올해 종수",yrSp.size],["올해 기록",yrN],["올해 종추",yrLifer.size]]
     .map(([l,v])=>`<div class="stat"><b>${num(v)}</b><span>${l}</span></div>`).join("");
 
   // 동기화 사진 사용량 — 무료는 FREE_PHOTO_SYNC_LIMIT 장까지
@@ -2348,8 +2465,9 @@ async function renderStats(obsIn){
   const life={};
   obs.forEach(o=>{
     if(!o.species) return;
-    const s=life[o.species]||(life[o.species]={name:o.species,n:0,first:""});
+    const s=life[o.species]||(life[o.species]={name:o.species,n:0,first:"",lifer:false});
     s.n++;
+    if(o.lifer==="yes") s.lifer=true;
     const k=o.date?o.date+"T"+(o.time||"00:00"):"";
     if(k&&(!s.first||k<s.first)) s.first=k;
   });
@@ -2361,7 +2479,7 @@ async function renderStats(obsIn){
   document.querySelectorAll("#st-sorts .chip").forEach(c=>c.classList.toggle("on",c.dataset.s===lifeSort));
   const wrap=$("#st-life");
   if(!lifeRows.length){wrap.innerHTML=`<div class="empty"><p><b>아직 본 종이 없어요</b></p><p>‘기록’ 탭에서 첫 관찰을 남겨 보세요.</p></div>`;return;}
-  wrap.innerHTML=`<div class="lifelist">${lifeRows.map((s,i)=>`<button class="lrow" data-i="${i}"><span class="nm">${esc(s.name)}</span><span class="fd">${s.first?s.first.slice(0,10).replace(/-/g,"."):"—"}</span><span class="cn">${num(s.n)}회</span></button>`).join("")}</div>`;
+  wrap.innerHTML=`<div class="lifelist">${lifeRows.map((s,i)=>`<button class="lrow" data-i="${i}"><span class="nm">${s.lifer?'<i class="lstar">★</i>':''}${esc(s.name)}</span><span class="fd">${s.first?s.first.slice(0,10).replace(/-/g,"."):"—"}</span><span class="cn">${num(s.n)}회</span></button>`).join("")}</div>`;
   wrap.querySelectorAll(".lrow").forEach(r=>r.onclick=()=>openSpecies(lifeRows[+r.dataset.i].name));
 }
 async function renderPhotoQuota(){
