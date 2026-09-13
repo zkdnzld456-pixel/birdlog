@@ -1592,20 +1592,20 @@ $("#logphotofile").onchange=e=>{
 /* 사진 한 칸. 이 기기에 파일도 없고 서버 경로도 없는 사진 = 다른 기기에만 있는 사진 */
 function phCellHTML(o,p,i){
   const local=(p.blob instanceof Blob)||(p.thumb instanceof Blob);
-  if(!local&&!p.path) return `<span class="ph ghost" title="이 기기에만 있음"><i>이 기기에만<br>있음</i></span>`;
+  if(!local&&!p.path) return `<span class="ph ghost" title="다른 기기에만 있음"><i>다른 기기에만<br>있음</i></span>`;
   const on=!!p.sync;
   const tip=!on?"동기화 꺼짐 · 이 기기에만 있어요":canUnsync(p)?"동기화 켜짐 · 다른 기기에서도 보여요":"다른 기기에서 올린 사진 · 그 기기에서만 끌 수 있어요";
   const sync=sbUser?`<button class="phsync${on?" on":""}" data-id="${o.id}" data-phid="${p.id}" title="${tip}" aria-label="사진 동기화">☁</button>`:"";
-  return `<span class="ph"><img data-ph="${i}" alt="사진">${sync}<button class="phdel" data-id="${o.id}" data-phid="${p.id}" aria-label="사진 삭제">✕</button></span>`;
+  return `<span class="ph"><img data-ph="${i}" data-phid="${attr(p.id)}" alt="사진">${sync}<button class="phdel" data-id="${o.id}" data-phid="${p.id}" aria-label="사진 삭제">✕</button></span>`;
 }
 /* 목록에는 썸네일만 쓴다. 압축본은 카드 만들기와 사진 크게 보기에서만 연다. */
 async function paintPhotos(o,card){
   const imgs=[...card.querySelectorAll("img[data-ph]")];
   if(!imgs.length) return;
-  imgs.forEach(img=>{ img.onclick=()=>openLightbox(o.id,+img.dataset.ph); });
+  imgs.forEach(img=>{ img.onclick=()=>openLightbox(o.id,img.dataset.phid); });
   await ensureThumbs(o);
   for(const img of imgs){
-    const p=o.photos[+img.dataset.ph];
+    const p=(o.photos||[]).find(x=>x&&x.id===img.dataset.phid);
     if(!p||!img.isConnected) continue;
     if(p.thumb instanceof Blob){ img.src=URL.createObjectURL(p.thumb); img.classList.remove("ph-load"); }
     else if(p.path||p.thumbPath){ img.src=BLANK_PX; img.classList.add("ph-load"); fetchThumb(o.id,p,img); }
@@ -1649,9 +1649,9 @@ function closeLightbox(){
   if(im._u){ URL.revokeObjectURL(im._u); im._u=null; }
   im.removeAttribute("src");
 }
-async function openLightbox(obsId,idx){
+async function openLightbox(obsId,phId){
   const o=await getObs(obsId); if(!o) return;
-  const p=(o.photos||[])[idx]; if(!p) return;
+  const p=(o.photos||[]).find(x=>x&&x.id===phId); if(!p) return;
   const box=$("#lightbox"), im=$("#lb-img");
   im.removeAttribute("src"); box.style.display="flex";
   if(!(p.blob instanceof Blob)&&p.path) await fetchPhoto(obsId,p,null);
@@ -2039,7 +2039,8 @@ function mergePhotos(entries,local,obsId,meta){
       if(!id||seen.has(id)) return;
       seen.add(id);
       const ex=byId[id];
-      out.push(ex?{...ex,sync:false,uploaded:false,path:null,thumbPath:null,uploadedBy:null}
+      // 다른 기기에서 ☁ 를 끈 사진: 여기 압축본이 없으면 받아 둔 썸네일도 버리고 자리표시자로 둔다
+      out.push(ex?{...ex,sync:false,uploaded:false,path:null,thumbPath:null,uploadedBy:null,thumb:(ex.blob instanceof Blob)?ex.thumb:null}
                  :{id,blob:null,thumb:null,path:null,thumbPath:null,uploaded:false,sync:false,uploadedBy:null});
       return;
     }
@@ -2133,6 +2134,7 @@ async function pushLocal(){
 const PH_BUCKET="photos";
 const LOCAL_MARK="local:";          // 서버 photos 목록에서 "이 기기에만 있는 사진" 표식
 const phFetching=new Set();
+const phRetry=new Map();            // 썸네일 실패 횟수 — 자동 재시도는 세 번까지
 function phPath(obsId,phId){return sbUser.id+"/"+obsId+"/"+phId+".jpg";}
 function thumbOf(path){if(!path)return null;const i=path.lastIndexOf(".");return i>0?path.slice(0,i)+"_t"+path.slice(i):path+"_t";}
 function pathPhId(path){return (path.split("/").pop()||uid()).replace(/\.[^.]+$/,"");}
@@ -2244,6 +2246,10 @@ async function fixGhostPhotosOnce(force){
     const names=new Set((data||[]).map(f=>f.name));
     for(const p of cands){
       if(names.has(p.path.split("/").pop())) continue;
+      // 목록에 없다 — 정책 문제로 목록만 비어 왔을 수도 있으니 실제로 받아 봐서 404 일 때만 지운다
+      const r=await sbClient().storage.from(PH_BUCKET).download(p.path);
+      if(!r.error&&r.data) continue;
+      if(!isNotFound(r.error)){ failed=true; continue; }
       if(await dropGhostPhoto(o.id,p.id)) n++;
     }
   }
@@ -2302,7 +2308,7 @@ async function fetchThumb(obsId,ph,img){
       madeLocally=true;
     }
     if(!blob) return;
-    ph.thumb=blob;
+    ph.thumb=blob; phRetry.delete(key);
     const cur=await getObs(obsId);
     if(cur){
       const t=(cur.photos||[]).find(p=>p.id===ph.id);
@@ -2318,8 +2324,10 @@ async function fetchThumb(obsId,ph,img){
     if(isNotFound(e)){ if(await dropGhostPhoto(obsId,ph.id)) renderAll(); }   // 썸네일도 압축본도 없다 = 유령
     else{
       console.error("thumb download",e);
-      // 지금은 못 받았다(연결 문제 등) — 빙빙 도는 회색 대신 "?" 로. 다음에 그릴 때 다시 시도한다
+      // 지금은 못 받았다(연결·토큰 문제 등) — 빙빙 도는 회색 대신 "?" 로 두고 잠시 뒤 스스로 다시 시도한다
       if(img&&img.isConnected){img.src=PH_FAIL_PX;img.classList.remove("ph-load");img.classList.add("ph-fail");img.title="지금은 불러올 수 없어요";}
+      const n=(phRetry.get(key)||0)+1; phRetry.set(key,n);
+      if(n<=3) setTimeout(()=>{ if(img&&img.isConnected){ img.classList.remove("ph-fail"); img.classList.add("ph-load"); img.src=BLANK_PX; fetchThumb(obsId,ph,img); } },2000*n);
     }
   }
   finally{ phFetching.delete(key); }
