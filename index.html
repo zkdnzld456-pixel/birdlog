@@ -812,9 +812,37 @@ async function putObs(o){const s=await tx("readwrite");return new Promise((res,r
 async function delObs(id){const s=await tx("readwrite");return new Promise((res,rej)=>{const r=s.delete(id);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
 async function rawGet(id){const s=await tx("readonly");return new Promise((res,rej)=>{const r=s.get(id);r.onsuccess=()=>res(r.result||null);r.onerror=()=>rej(r.error);});}
 async function rawAll(){const s=await tx("readonly");return new Promise((res,rej)=>{const r=s.getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error);});}
+/* 서버 경로는 "userId/obsId/phId.jpg" — 가운데가 이 기록의 id 여야 한다.
+   다른 기록의 id 가 박힌 경로는 어떤 경로로 들어왔든 이 기록에 넣지 않는다. */
+function pathObsId(path){const s=(path||"").split("/");return s.length>=3?s[s.length-2]:null;}
+function isThumbPath(path){return /_t\.[^./]+$/.test(path||"");}
+function photoBelongs(obsId,path){return !!path&&!isThumbPath(path)&&pathObsId(path)===obsId;}
+/* 같은 id 는 하나로 합친다(파일·썸네일·경로가 있는 쪽을 살림). 다른 기록의 경로는 버린다.
+   같은 입력을 몇 번 돌려도 결과가 같다 — 동기화가 몇 번 오가도 사진 수가 늘지 않는 근거. */
+function dedupPhotos(obsId,list){
+  const out=[], at={};
+  let changed=false;
+  (list||[]).forEach(p=>{
+    if(!p||typeof p!=="object"){changed=true;return;}
+    if(p.path&&!photoBelongs(obsId,p.path)){changed=true;return;}
+    const k=p.id;
+    if(k!=null&&at[k]!=null){
+      const q=out[at[k]];
+      if(!(q.blob instanceof Blob)&&p.blob instanceof Blob) q.blob=p.blob;
+      if(!(q.thumb instanceof Blob)&&p.thumb instanceof Blob) q.thumb=p.thumb;
+      if(!q.path&&p.path){q.path=p.path;q.uploaded=!!p.uploaded;}
+      if(!q.thumbPath&&p.thumbPath) q.thumbPath=p.thumbPath;
+      if(p.sync) q.sync=true;
+      changed=true; return;
+    }
+    if(k!=null) at[k]=out.length;
+    out.push(p);
+  });
+  return {list:out,changed};
+}
 /* 예전 기록의 photos 를 {id,blob,thumb,path,thumbPath,uploaded,sync} 로 올려붙임.
    sync 는 "서버에 두겠다"는 사용자 의사, uploaded 는 "실제로 올라가 있다"는 상태.
-   이미 올라가 있던 사진은 동기화 켜진 상태로 유지한다. */
+   이미 올라가 있던 사진은 동기화 켜진 상태로 유지한다. 읽을 때마다 중복·남의 경로도 걸러 낸다. */
 function normPhotos(o){
   if(!Array.isArray(o.photos)){o.photos=[];return true;}
   const before=o.photos.length;
@@ -828,7 +856,26 @@ function normPhotos(o){
     if(p.thumbPath===undefined){p.thumbPath=null;changed=true;}   // 서버에 썸네일을 올린 뒤에만 채운다
     return p;
   }).filter(p=>p&&typeof p==="object"&&(p.id||p.path));
-  return changed||o.photos.length!==before;
+  const d=dedupPhotos(o.id,o.photos);
+  o.photos=d.list;
+  return changed||d.changed||o.photos.length!==before;
+}
+/* 한 번만: 이미 증식·오염된 기록을 정리하고, 바뀐 기록은 dirty 로 표시해 서버 행도 고쳐지게 한다.
+   같은 사진 id 중복 제거 + 다른 기록 id 가 박힌 경로 제거. 남의 기록 파일은 서버에서 지우지 않는다. */
+async function fixPhotosOnce(force){
+  const KEY="bl_ph_fix_1";
+  try{ if(!force&&localStorage.getItem(KEY)) return 0; }catch(e){}
+  let n=0;
+  for(const o of await rawAll()){
+    const key=x=>JSON.stringify((Array.isArray(x)?x:[]).map(p=>p&&typeof p==="object"?[p.id||null,p.path||null]:null));
+    const before=key(o.photos);
+    const changed=normObs(o);
+    if(key(o.photos)!==before){ await putObs(o.deleted?o:touch(o)); n++; }
+    else if(changed) await putObs(o);
+  }
+  try{ localStorage.setItem(KEY,"1"); }catch(e){}
+  if(n){ console.info("사진 정리: "+n+"건"); scheduleSync(); }
+  return n;
 }
 /* 종추: 'no' | 'yes' | 'maybe'. 예전 기록이나 서버에서 온 값이 비어 있으면 'no'. */
 const LIFER_VALS=["no","yes","maybe"];
@@ -1756,7 +1803,8 @@ async function download(name,blob){
 function blobToDataURL(b){return new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(b);});}
 function dataURLtoBlob(d){const[h,b]=d.split(",");const mime=(h.match(/:(.*?);/)||[])[1]||"image/jpeg";const bin=atob(b);const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return new Blob([u8],{type:mime});}
 function today(){const d=new Date();return d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate());}
-$("#exp-json").onclick=async()=>{const obs=await allObs();const out=[];for(const o of obs){const photos=[];for(const p of (o.photos||[])){if(p&&p.blob instanceof Blob)photos.push(await blobToDataURL(p.blob));}out.push({...o,photos});}download("Birdlog_백업_"+today()+".json",new Blob([JSON.stringify(out,null,2)],{type:"application/json"}));};
+/* 사진은 {id,data} 로 내보낸다. id 를 지키면 다시 불러온 사진이 서버·다른 기기의 같은 사진과 하나로 합쳐진다. */
+$("#exp-json").onclick=async()=>{const obs=await allObs();const out=[];for(const o of obs){const photos=[];for(const p of (o.photos||[])){if(p&&p.blob instanceof Blob)photos.push({id:p.id,data:await blobToDataURL(p.blob)});}out.push({...o,photos});}download("Birdlog_백업_"+today()+".json",new Blob([JSON.stringify(out,null,2)],{type:"application/json"}));};
 $("#exp-csv").onclick=async()=>{const obs=await allObs();const head=["종명","날짜","시간","지명","위도","경도","개체수","해시태그","메모","사진수","종추"];const e=v=>`"${String(v??"").replace(/"/g,'""')}"`;const lines=[head.join(",")];obs.sort((a,b)=>obsDate(b)-obsDate(a)).forEach(o=>{lines.push([o.species,o.date,o.time,o.place??"",o.lat??"",o.lng??"",o.count??"",o.tags.map(t=>"#"+t).join(" "),o.memo,o.photos.length,o.lifer==="yes"?"종추":o.lifer==="maybe"?"종추?":""].map(e).join(","));});download("Birdlog_"+today()+".csv",new Blob(["\uFEFF"+lines.join("\n")],{type:"text/csv"}));};
 $("#imp-json").onclick=()=>{$("#importfile").value="";$("#importfile").click();};
 $("#importfile").onchange=async e=>{
@@ -1766,13 +1814,23 @@ $("#importfile").onchange=async e=>{
     if(!Array.isArray(arr))throw new Error("형식 오류");
     let n=0;
     for(const rec of arr){
-      const photos=[];
+      let photos=[];
+      const id=rec.id||uid();
       for(const p of (rec.photos||[])){
-        if(typeof p==="string"&&p.startsWith("data:"))photos.push({id:uid(),blob:dataURLtoBlob(p),thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});
+        if(typeof p==="string"&&p.startsWith("data:"))photos.push({id:uid(),blob:dataURLtoBlob(p),thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});   // 예전 백업
+        else if(p&&typeof p==="object"&&typeof p.data==="string"&&p.data.startsWith("data:"))photos.push({id:(typeof p.id==="string"&&p.id)||uid(),blob:dataURLtoBlob(p.data),thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});
         else if(p instanceof Blob)photos.push({id:uid(),blob:p,thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});
         else if(p&&typeof p==="object"&&p.blob instanceof Blob)photos.push({id:p.id||uid(),blob:p.blob,thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});
       }
-      await saveObs({...rec,photos,tags:Array.isArray(rec.tags)?rec.tags:[],lifer:normLiferVal(rec.lifer),id:rec.id||uid()});
+      // 같은 기록이 이미 있으면 같은 id 사진의 서버 경로·동기화 상태는 그대로 둔다 (백업 복원이 사진을 로컬 전용으로 되돌리지 않게)
+      const cur=await rawGet(id);
+      if(cur&&Array.isArray(cur.photos)){
+        photos=photos.map(p=>{
+          const ex=cur.photos.find(x=>x&&x.id===p.id);
+          return ex?{...ex,blob:(ex.blob instanceof Blob)?ex.blob:p.blob,thumb:(ex.thumb instanceof Blob)?ex.thumb:null}:p;
+        });
+      }
+      await saveObs({...rec,photos:dedupPhotos(id,photos).list,tags:Array.isArray(rec.tags)?rec.tags:[],lifer:normLiferVal(rec.lifer),id});
       n++;
     }
     await refreshSpeciesList();await renderAll();toast(n+"건 불러왔어요");
@@ -1835,23 +1893,34 @@ function toRemote(o){
     orig_lat:o.origLat??null,orig_lng:o.origLng??null,
     count:o.count??null,tags:Array.isArray(o.tags)?o.tags:[],memo:o.memo||"",
     lifer:normLiferVal(o.lifer),
-    photos:(o.photos||[]).map(p=>(p.uploaded&&p.path)?p.path:LOCAL_MARK+p.id),
+    photos:dedupPhotos(o.id,o.photos).list.map(p=>(p.uploaded&&p.path)?p.path:LOCAL_MARK+p.id),
     created:o.created||Date.now(),updated_at:o.updated_at||new Date().toISOString()};
 }
 function fromRemote(r,local){
-  return {id:r.id,species:r.species||"",
+  const photos=mergePhotos(r.photos,local,r.id);
+  const o={id:r.id,species:r.species||"",
     date:r.date||"",time:(r.time||"").slice(0,5),
     lat:r.lat??null,lng:r.lng??null,acc:r.acc??null,place:r.place??null,
     origLat:r.orig_lat??null,origLng:r.orig_lng??null,
     count:r.count??null,tags:Array.isArray(r.tags)?r.tags:[],memo:r.memo||"",
     lifer:normLiferVal(r.lifer),
-    photos:mergePhotos(r.photos,local),created:Number(r.created)||Date.now(),
+    photos,created:Number(r.created)||Date.now(),
     updated_at:r.updated_at||new Date().toISOString(),dirty:false,deleted:false,remote:true};
+  // 병합하면서 서버 목록을 고쳤다면(중복·남의 경로·안 올라간 이 기기 사진) 서버 행도 바로잡히게 다시 올린다.
+  // updated_at 은 서버 값보다 뒤로 두어 다른 기기도 정리된 목록을 받게 한다.
+  const sent=(Array.isArray(r.photos)?r.photos:[]).filter(e=>typeof e==="string"&&e);
+  const mine=photos.map(p=>(p.uploaded&&p.path)?p.path:LOCAL_MARK+p.id);
+  if(sent.length!==mine.length||sent.some((e,i)=>e!==mine[i])){
+    o.dirty=true;
+    o.updated_at=new Date(Math.max(Date.now(),stamp(r.updated_at)+1)).toISOString();
+  }
+  return o;
 }
 function stamp(v){const t=Date.parse(v||"");return isNaN(t)?0:t;}
 /* 서버 목록 + 로컬 사진 합치기 — 받아 둔 blob/thumb 은 그대로 재사용.
-   local: 표식은 "다른 기기에만 있는 사진" — 이 기기엔 파일이 없으니 자리표시자로 남는다. */
-function mergePhotos(entries,local){
+   local: 표식은 "다른 기기에만 있는 사진" — 이 기기엔 파일이 없으니 자리표시자로 남는다.
+   같은 id 는 한 번만 넣고(seen), 다른 기록 id 가 박힌 경로는 건너뛴다. */
+function mergePhotos(entries,local,obsId){
   const cur=(local&&local.photos)||[], byId={}, byPath={};
   cur.forEach(p=>{if(p.id)byId[p.id]=p;if(p.path)byPath[p.path]=p;});
   const seen=new Set(), out=[];
@@ -1866,6 +1935,7 @@ function mergePhotos(entries,local){
                  :{id,blob:null,thumb:null,path:null,thumbPath:null,uploaded:false,sync:false});
       return;
     }
+    if(!photoBelongs(obsId,entry)){console.warn("다른 기록의 사진 경로는 건너뜀",obsId,entry);return;}
     const ex=byPath[entry], id=(ex&&ex.id)||pathPhId(entry);
     if(seen.has(id)) return;
     seen.add(id);
@@ -1875,7 +1945,7 @@ function mergePhotos(entries,local){
   });
   // 아직 서버에 알리지 못한 이 기기의 사진은 그대로 유지
   cur.forEach(p=>{if(!seen.has(p.id)&&(p.blob instanceof Blob||p.thumb instanceof Blob))out.push(p);});
-  return out;
+  return dedupPhotos(obsId,out).list;
 }
 
 /* --- 첫 로그인: 기존 로컬 기록을 전부 올림 --- */
@@ -2019,6 +2089,7 @@ async function uploadPhotos(){
 /* 다른 기기에서 올린 사진을 필요할 때 받아 로컬에 캐시 */
 async function fetchPhoto(obsId,ph,img){
   if(!ph||!ph.path||ph.blob instanceof Blob) return;
+  if(!photoBelongs(obsId,ph.path)) return;
   if(!sbClient()||!sbUser||!navigator.onLine) return;
   const key=obsId+"|"+ph.id;
   if(phFetching.has(key)) return;
@@ -2043,6 +2114,7 @@ async function fetchThumb(obsId,ph,img){
   if(!ph||ph.thumb instanceof Blob) return;
   const tpath=ph.thumbPath||(ph.path?thumbOf(ph.path):null);
   if(!tpath&&!ph.path) return;
+  if(ph.path?!photoBelongs(obsId,ph.path):pathObsId(tpath)!==obsId) return;
   if(!sbClient()||!sbUser||!navigator.onLine) return;
   const key=obsId+"|t|"+ph.id;
   if(phFetching.has(key)) return;
@@ -2744,7 +2816,7 @@ $("#sort").onchange=()=>renderList();
 function inMap(e){ return !!(e.target&&e.target.closest&&e.target.closest("#st-map,#loc-map")); }
 document.addEventListener("gesturestart",e=>{if(!inMap(e))e.preventDefault();});
 document.addEventListener("gesturechange",e=>{if(!inMap(e))e.preventDefault();});
-(async function(){fillNow();$("#fav-date").value=tomorrowYMD();await loadFavs();await refreshSpeciesList();await renderAll();grabGPS();initSync();})();
+(async function(){fillNow();$("#fav-date").value=tomorrowYMD();await loadFavs();await fixPhotosOnce();await refreshSpeciesList();await renderAll();grabGPS();initSync();})();
 </script>
 </body>
 </html>
