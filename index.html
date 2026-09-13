@@ -299,7 +299,27 @@
     font-family:inherit;letter-spacing:.5px;cursor:pointer}
   .cm-save:active{transform:translateY(1px)}
   .ed-body{flex:1 1 auto;min-height:0;overflow:auto;padding:2px 2px 6px}
-  .ed-loc{flex:none;font-size:12px;color:var(--muted);margin:-6px 0 14px;padding:8px 10px;background:var(--bark);border-radius:8px}
+  .ed-loc{flex:none;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin:-6px 0 14px;padding:8px 10px;background:var(--bark);border-radius:8px}
+  .ed-loc span{flex:1;min-width:0}
+  .ed-loc button{flex:none;background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 10px;
+    font-size:12px;font-weight:600;font-family:inherit;color:var(--amber-soft);cursor:pointer;white-space:nowrap}
+  /* ---- 위치 직접 지정 시트 (PC 기록용) ---- 수정 시트(z 60) 위에 뜬다 */
+  #locsheet{z-index:65}
+  .loc-q{margin-bottom:8px}
+  .loc-list{border:1.5px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:8px;background:#fff}
+  .loc-row{width:100%;display:flex;flex-direction:column;gap:1px;padding:9px 12px;background:none;border:none;
+    border-top:1px solid var(--bark-2);font-family:inherit;text-align:left;cursor:pointer}
+  .loc-row:first-child{border-top:none}
+  .loc-row:active{background:var(--bark)}
+  .loc-row b{font-size:14px;color:var(--cream)}
+  .loc-row small{font-size:11.5px;color:var(--muted)}
+  .loc-msg{margin:0 0 8px;padding:9px 12px;font-size:12.5px;color:var(--muted);background:var(--bark);border-radius:10px}
+  #loc-map{width:100%;height:300px;border:1.5px solid var(--line);border-radius:11px;background:var(--bark)}
+  @media (min-width:700px){#loc-map{height:380px}}
+  .loc-coord{font-size:12.5px;color:var(--muted);margin:8px 2px 10px;font-variant-numeric:tabular-nums}
+  .loc-coord b{color:var(--amber-d)}
+  .cm-save:disabled{opacity:.5}
+  .card .geo .edited{font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;background:#fdf3ea;color:#a4602f}
   .card .actions .edit{color:var(--amber-d);border-color:var(--line)}
 
   .empty{text-align:center;color:var(--muted);padding:44px 20px}
@@ -553,6 +573,7 @@
         <span class="dot"></span>
         <div class="txt"><b id="gps-coord">위치 확인 중…</b><small id="gps-sub">GPS를 켜고 잠시 기다려 주세요</small></div>
         <button type="button" id="gps-retry">다시</button>
+        <button type="button" id="gps-pick">📍 위치 지정</button>
       </div>
     </div>
 
@@ -669,7 +690,7 @@
         <button type="button" class="lifer-btn" id="ed-lifer-btn" aria-pressed="false">종추 표시</button>
         <p class="lifer-hint" id="ed-lifer-hint" hidden></p>
       </div>
-      <p class="ed-loc" id="ed-loc"></p>
+      <p class="ed-loc"><span id="ed-loc-txt"></span><button type="button" id="ed-loc-btn">📍 위치 지정</button></p>
       <div class="row">
         <div class="field"><label class="lab" for="ed-date">날짜</label><input id="ed-date" type="date"></div>
         <div class="field"><label class="lab" for="ed-time">시간</label><input id="ed-time" type="time"></div>
@@ -688,6 +709,22 @@
       </div>
     </div>
     <button id="ed-save" class="cm-save">수정 저장</button>
+  </div>
+</div>
+
+<div id="locsheet" class="cm-overlay" style="display:none">
+  <div class="cm-sheet">
+    <div class="cm-head">
+      <strong>위치 지정</strong>
+      <button id="loc-close" aria-label="닫기">✕</button>
+    </div>
+    <div class="ed-body">
+      <input id="loc-q" class="loc-q" placeholder="지명·장소 검색 (로그인 필요)" autocomplete="off" enterkeyhint="search">
+      <div id="loc-results"></div>
+      <div id="loc-map"></div>
+      <p class="loc-coord" id="loc-coord"></p>
+    </div>
+    <button id="loc-ok" class="cm-save" disabled>이 위치로 확정</button>
   </div>
 </div>
 
@@ -918,6 +955,148 @@ function grabGPS(){
 }
 $("#gps-retry").onclick=grabGPS;
 
+/* ============ 위치 직접 지정 (PC 에서 기록할 때) ============
+   GPS 카드의 "📍 위치 지정" — 시트에 지도를 띄워 탭한 곳이나 검색한 장소로 핀을 놓는다.
+   확정하면 좌표를 쓰고 지명은 Nominatim 으로 받아 온다. 지명 검색은 카카오 로컬 키워드
+   검색인데 키는 Edge Function(place-search) 뒤에 있어 로그인해야 쓸 수 있다.
+   수정 시트에서도 같은 흐름. 원래 좌표가 있던 기록은 origLat/origLng 에 원본을 남긴다. */
+const PLACE_FN="place-search", PLACE_SIZE=5;
+const PLACE_LOGIN_MSG="로그인하면 지명을 검색할 수 있어요";
+let locMap=null, locPin=null, locTarget=null, locLatLng=null, locQTimer=null, locSeq=0;
+let editLoc=null, editPlace=null;          // 수정 시트에서 아직 저장 안 한 새 위치
+
+/* 위치가 있는 가장 최근 기록 — 지도를 처음 열 때 중심으로 */
+async function lastObsPos(){
+  let best=null;
+  (await allObs()).forEach(o=>{
+    if(!Number.isFinite(o.lat)||!Number.isFinite(o.lng)) return;
+    if(!best) {best=o;return;}
+    const d=obsDate(o)-obsDate(best);
+    if(d>0||(d===0&&(o.created||0)>(best.created||0))) best=o;
+  });
+  return best?{lat:best.lat,lng:best.lng}:null;
+}
+function ensureLocMap(){
+  if(locMap) return locMap;
+  if(!leafletOK()) return null;
+  locMap=L.map("loc-map",{zoomControl:true}).setView(KR_CENTER,KR_ZOOM);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{
+    maxZoom:19,
+    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> 기여자'
+  }).addTo(locMap);
+  locMap.on("click",e=>setLocPin(e.latlng.lat,e.latlng.lng,false));
+  return locMap;
+}
+function setLocPin(lat,lng,fly){
+  lat=Math.round(lat*1e6)/1e6; lng=Math.round(lng*1e6)/1e6;
+  locLatLng={lat,lng};
+  if(!locPin){
+    const icon=L.divIcon({className:"bl-pin",html:"<i></i>",iconSize:[15,15],iconAnchor:[7.5,7.5]});
+    locPin=L.marker([lat,lng],{icon}).addTo(locMap);
+  }else locPin.setLatLng([lat,lng]);
+  if(fly) locMap.setView([lat,lng],Math.max(locMap.getZoom(),15));
+  $("#loc-coord").innerHTML=`핀 위치 <b>${esc(fmtCoord(lat,lng))}</b> · 지도를 탭하면 옮길 수 있어요`;
+  $("#loc-ok").disabled=false;
+}
+async function openLocPicker(target){
+  if(!leafletOK()){toast("지도를 불러오지 못했어요 · 연결을 확인해 주세요");return;}
+  locTarget=target;
+  let start=null, pinned=false;
+  if(target==="edit"){
+    if(editLoc){start=editLoc;pinned=true;}
+    else{
+      const o=editId?await getObs(editId):null;
+      if(o&&Number.isFinite(o.lat)&&Number.isFinite(o.lng)){start={lat:o.lat,lng:o.lng};pinned=true;}
+    }
+  }else if(curPos){start={lat:curPos.lat,lng:curPos.lng};pinned=true;}
+  if(!start) start=await lastObsPos();
+  clearTimeout(locQTimer); locSeq++;
+  $("#loc-q").value=""; $("#loc-results").innerHTML="";
+  $("#loc-ok").disabled=true;
+  $("#loc-coord").textContent="지도를 탭하거나 위에서 장소를 검색해 핀을 놓아 주세요";
+  $("#locsheet").style.display="flex";
+  const m=ensureLocMap();
+  if(locPin){locPin.remove();locPin=null;}
+  locLatLng=null;
+  // 시트가 보이게 된 다음 틱에 크기를 다시 잡고 시점을 맞춘다 (rAF 는 탭이 가려져 있으면 멈춘다)
+  setTimeout(()=>{
+    m.invalidateSize();
+    if(start){ m.setView([start.lat,start.lng],pinned?15:12); if(pinned) setLocPin(start.lat,start.lng,false); }
+    else m.setView(KR_CENTER,KR_ZOOM);
+  },0);
+}
+function closeLocPicker(){$("#locsheet").style.display="none";clearTimeout(locQTimer);locSeq++;}
+$("#loc-close").onclick=closeLocPicker;
+$("#locsheet").onclick=e=>{if(e.target.id==="locsheet")closeLocPicker();};
+$("#gps-pick").onclick=()=>openLocPicker("log");
+$("#ed-loc-btn").onclick=()=>openLocPicker("edit");
+
+/* GPS 카드 — 직접 지정한 위치 */
+function paintManualGPS(lat,lng,place,done){
+  const box=$("#gps"),coord=$("#gps-coord"),sub=$("#gps-sub");
+  box.className="gps live";
+  coord.innerHTML="<b>"+esc(place||fmtCoord(lat,lng))+"</b>";
+  sub.textContent="직접 지정 · "+(place?fmtCoord(lat,lng):(done?"지명은 확인 못 했어요 · 좌표는 저장돼요":"지명 확인 중…"));
+}
+$("#loc-ok").onclick=async()=>{
+  if(!locLatLng) return;
+  const {lat,lng}=locLatLng, target=locTarget;
+  closeLocPicker();
+  if(target==="log"){
+    curPos={lat,lng,acc:null,manual:true}; curPlace=null;
+    paintManualGPS(lat,lng,null,false);
+    const place=await reverseGeocode(lat,lng);
+    if(!curPos||!curPos.manual||curPos.lat!==lat||curPos.lng!==lng) return;   // 그새 GPS 를 다시 잡았다
+    curPlace=place; paintManualGPS(lat,lng,place,true);
+  }else{
+    const id=editId; if(!id) return;
+    editLoc={lat,lng}; editPlace=null;
+    $("#ed-loc-txt").textContent="📍 "+fmtCoord(lat,lng)+" · 직접 지정 · 지명 확인 중…";
+    const place=await reverseGeocode(lat,lng);
+    if(editId!==id||!editLoc||editLoc.lat!==lat||editLoc.lng!==lng) return;
+    editPlace=place;
+    $("#ed-loc-txt").textContent="📍 "+(place||fmtCoord(lat,lng))+" · 직접 지정";
+  }
+};
+
+/* 지명 검색 — 입력 후 350ms 쉬면 조회. 지도 중심을 함께 보내 가까운 곳이 먼저 오게 한다. */
+$("#loc-q").oninput=()=>{
+  clearTimeout(locQTimer);
+  const q=$("#loc-q").value.trim();
+  if(!q){$("#loc-results").innerHTML="";locSeq++;return;}
+  locQTimer=setTimeout(()=>searchPlace(q),350);
+};
+$("#loc-q").onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();clearTimeout(locQTimer);const q=$("#loc-q").value.trim();if(q)searchPlace(q);}};
+async function searchPlace(q){
+  const box=$("#loc-results"), seq=++locSeq;
+  if(!sbUser){box.innerHTML=`<p class="loc-msg">${PLACE_LOGIN_MSG}</p>`;return;}
+  const c=sbClient();
+  if(!c){box.innerHTML=`<p class="loc-msg">지금은 검색할 수 없어요</p>`;return;}
+  box.innerHTML=`<p class="loc-msg">찾는 중…</p>`;
+  try{
+    const body={q};
+    if(locMap){const ctr=locMap.getCenter();body.lat=ctr.lat;body.lng=ctr.lng;}
+    const {data,error}=await c.functions.invoke(PLACE_FN,{body});
+    if(error) throw error;
+    if(seq!==locSeq) return;
+    const items=((data&&data.documents)||[]).slice(0,PLACE_SIZE);
+    if(!items.length){box.innerHTML=`<p class="loc-msg">‘${esc(q)}’ 검색 결과가 없어요</p>`;return;}
+    box.innerHTML=`<div class="loc-list">`+items.map((d,i)=>
+      `<button type="button" class="loc-row" data-i="${i}"><b>${esc(d.place_name||"이름 없음")}</b>`
+      +`<small>${esc(d.road_address_name||d.address_name||"")}</small></button>`).join("")+`</div>`;
+    box.querySelectorAll(".loc-row").forEach(b=>b.onclick=()=>{
+      const d=items[+b.dataset.i], lat=parseFloat(d.y), lng=parseFloat(d.x);
+      if(!Number.isFinite(lat)||!Number.isFinite(lng)){toast("이 장소는 좌표가 없어요");return;}
+      setLocPin(lat,lng,true);
+      box.innerHTML=""; $("#loc-q").value=d.place_name||q;
+    });
+  }catch(e){
+    console.error("place-search",e);
+    if(seq!==locSeq) return;
+    box.innerHTML=`<p class="loc-msg">${cvsNeedsLogin(e)?PLACE_LOGIN_MSG:"지금은 검색할 수 없어요"}</p>`;
+  }
+}
+
 /* ============ date/time ============ */
 function fillNow(){const d=new Date();$("#date").value=d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());$("#time").value=pad(d.getHours())+":"+pad(d.getMinutes());}
 
@@ -1050,7 +1229,7 @@ async function renderList(obsIn){
     return `<div class="card" data-id="${o.id}">
       <div class="top"><span class="sp">${esc(o.species)}</span>${liferBadge(o.lifer)}${ct?`<span class="ct">${ct}</span>`:""}</div>
       <div class="meta">${dt} ${loc}</div>
-      ${o.lat!=null?`<div class="geo"><span class="coord">${o.lat.toFixed(5)}, ${o.lng.toFixed(5)}</span><button class="cpgeo" data-lat="${o.lat}" data-lng="${o.lng}">좌표 복사</button><a class="mapgeo" href="https://www.google.com/maps/search/?api=1&query=${o.lat},${o.lng}" target="_blank" rel="noopener">구글맵</a></div>`:""}
+      ${o.lat!=null?`<div class="geo"><span class="coord">${o.lat.toFixed(5)}, ${o.lng.toFixed(5)}</span><button class="cpgeo" data-lat="${o.lat}" data-lng="${o.lng}">좌표 복사</button><a class="mapgeo" href="https://www.google.com/maps/search/?api=1&query=${o.lat},${o.lng}" target="_blank" rel="noopener">구글맵</a>${o.origLat!=null?`<span class="edited" title="원래 좌표 ${o.origLat.toFixed(5)}, ${o.origLng.toFixed(5)}">위치 수정됨</span>`:""}</div>`:""}
       ${o.memo?`<div class="memo">${esc(o.memo)}</div>`:""}
       ${tags?`<div class="tags">${tags}</div>`:""}
       <div class="photos">${o.photos.map((p,i)=>phCellHTML(o,p,i)).join("")}</div>
@@ -1104,10 +1283,11 @@ async function openEditor(id){
   $("#ed-tags").value=(o.tags||[]).map(t=>"#"+t).join(" ");
   $("#ed-memo").value=o.memo||"";
   const locTxt = o.place ? o.place : (o.lat!=null ? o.lat.toFixed(5)+", "+o.lng.toFixed(5) : "위치 없음");
-  $("#ed-loc").textContent="📍 "+locTxt+" (위치는 수정되지 않아요)";
+  editLoc=null; editPlace=null;
+  $("#ed-loc-txt").textContent="📍 "+locTxt+(o.origLat!=null?" · 위치 수정됨":"");
   $("#editor").style.display="flex";
 }
-function closeEditor(){$("#editor").style.display="none";editId=null;}
+function closeEditor(){$("#editor").style.display="none";editId=null;editLoc=null;editPlace=null;}
 $("#ed-close").onclick=closeEditor;
 $("#editor").onclick=e=>{ if(e.target.id==="editor") closeEditor(); };
 $("#ed-save").onclick=async()=>{
@@ -1124,6 +1304,11 @@ $("#ed-save").onclick=async()=>{
   o.tags=parseTags($("#ed-tags").value);
   o.memo=$("#ed-memo").value.trim();
   o.lifer=editLifer;
+  if(editLoc){
+    // 원래 좌표가 있던 기록이면 처음 한 번만 원본을 남긴다
+    if(o.lat!=null&&o.lng!=null&&o.origLat==null){o.origLat=o.lat;o.origLng=o.lng;}
+    o.lat=editLoc.lat; o.lng=editLoc.lng; o.acc=null; o.place=editPlace;
+  }
   try{
     await saveObs(o);
     closeEditor();
@@ -1598,7 +1783,7 @@ $("#importfile").onchange=async e=>{
 const SB_URL="https://wmbmkwkyvbqlelcmrroh.supabase.co";
 const SB_KEY="sb_publishable__CEtK43l-PlF6unAsLuEwQ_boEmL4ZQ";
 const SB_TABLE="observations";
-const SB_COLS="id,species,date,time,lat,lng,acc,place,count,tags,memo,photos,lifer,created,updated_at";
+const SB_COLS="id,species,date,time,lat,lng,acc,place,orig_lat,orig_lng,count,tags,memo,photos,lifer,created,updated_at";
 let sb=null, sbUser=null, syncBusy=false, syncAgain=false, syncTimer=null;
 
 function sbClient(){
@@ -1647,6 +1832,7 @@ function toRemote(o){
   return {id:o.id,user_id:sbUser.id,species:o.species||"",
     date:o.date||null,time:o.time||null,
     lat:o.lat??null,lng:o.lng??null,acc:o.acc??null,place:o.place??null,
+    orig_lat:o.origLat??null,orig_lng:o.origLng??null,
     count:o.count??null,tags:Array.isArray(o.tags)?o.tags:[],memo:o.memo||"",
     lifer:normLiferVal(o.lifer),
     photos:(o.photos||[]).map(p=>(p.uploaded&&p.path)?p.path:LOCAL_MARK+p.id),
@@ -1656,6 +1842,7 @@ function fromRemote(r,local){
   return {id:r.id,species:r.species||"",
     date:r.date||"",time:(r.time||"").slice(0,5),
     lat:r.lat??null,lng:r.lng??null,acc:r.acc??null,place:r.place??null,
+    origLat:r.orig_lat??null,origLng:r.orig_lng??null,
     count:r.count??null,tags:Array.isArray(r.tags)?r.tags:[],memo:r.memo||"",
     lifer:normLiferVal(r.lifer),
     photos:mergePhotos(r.photos,local),created:Number(r.created)||Date.now(),
@@ -2554,7 +2741,7 @@ $("#sort").onchange=()=>renderList();
 
 /* ============ init ============ */
 // 페이지 전체 확대는 막되, 지도 위에서는 통과시킨다 (지도 자체 핀치줌을 쓰라고)
-function inMap(e){ return !!(e.target&&e.target.closest&&e.target.closest("#st-map")); }
+function inMap(e){ return !!(e.target&&e.target.closest&&e.target.closest("#st-map,#loc-map")); }
 document.addEventListener("gesturestart",e=>{if(!inMap(e))e.preventDefault();});
 document.addEventListener("gesturechange",e=>{if(!inMap(e))e.preventDefault();});
 (async function(){fillNow();$("#fav-date").value=tomorrowYMD();await loadFavs();await refreshSpeciesList();await renderAll();grabGPS();initSync();})();

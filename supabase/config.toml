@@ -4,3 +4,7 @@ project_id = "wmbmkwkyvbqlelcmrroh"
 # (함수 안에서는 Origin 검사를 따로 한다)
 [functions.nearby-cs]
 verify_jwt = true
+
+# 지명 검색(위치 직접 지정) — 같은 이유로 로그인한 사람만
+[functions.place-search]
+verify_jwt = true
