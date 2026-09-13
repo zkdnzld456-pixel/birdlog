@@ -1841,7 +1841,24 @@ $("#importfile").onchange=async e=>{
 const SB_URL="https://wmbmkwkyvbqlelcmrroh.supabase.co";
 const SB_KEY="sb_publishable__CEtK43l-PlF6unAsLuEwQ_boEmL4ZQ";
 const SB_TABLE="observations";
-const SB_COLS="id,species,date,time,lat,lng,acc,place,orig_lat,orig_lng,count,tags,memo,photos,lifer,created,updated_at";
+const SB_BASE_COLS="id,species,date,time,lat,lng,acc,place,count,tags,memo,photos,created,updated_at";
+/* 나중에 추가된 컬럼 — 서버에 아직 없으면(SQL 을 안 돌렸으면) 이 컬럼만 빼고 동기화한다.
+   컬럼 하나 때문에 기록 전체가 안 올라가는 일은 없어야 한다. */
+const SB_OPT_COLS=["lifer","orig_lat","orig_lng"];
+const sbMissing=new Set();
+function sbCols(){return [SB_BASE_COLS].concat(SB_OPT_COLS.filter(c=>!sbMissing.has(c))).join(",");}
+/* PostgREST: select 에 없는 컬럼 → 42703 "column ... does not exist",
+   upsert 에 없는 키 → PGRST204 "Could not find the 'x' column ... in the schema cache" */
+function missingColFrom(err){
+  const m=String((err&&err.message)||""), code=err&&err.code;
+  if(code!=="42703"&&code!=="PGRST204"&&!/column/i.test(m)) return null;
+  const hit=SB_OPT_COLS.find(c=>!sbMissing.has(c)&&m.includes(c));
+  if(!hit) return null;
+  sbMissing.add(hit);
+  console.warn("서버 observations 에 "+hit+" 컬럼이 없어요 — 이 컬럼만 빼고 동기화합니다. SQL 을 실행해 주세요.");
+  toast("서버에 "+hit+" 컬럼이 없어요 · 그 값만 빼고 동기화해요");
+  return hit;
+}
 let sb=null, sbUser=null, syncBusy=false, syncAgain=false, syncTimer=null;
 
 function sbClient(){
@@ -1963,8 +1980,12 @@ async function migrateOnce(){
 
 /* --- 내려받아 병합: 충돌은 updated_at 최신이 이김 --- */
 async function pullRemote(){
-  const {data,error}=await sbClient().from(SB_TABLE).select(SB_COLS).eq("user_id",sbUser.id);
-  if(error) throw error;
+  let data;
+  for(;;){
+    const r=await sbClient().from(SB_TABLE).select(sbCols()).eq("user_id",sbUser.id);
+    if(!r.error){data=r.data;break;}
+    if(!missingColFrom(r.error)) throw r.error;     // 없는 컬럼이면 빼고 한 번 더
+  }
   const local=await allRows(), byId={};
   local.forEach(o=>byId[o.id]=o);
   const seen=new Set(); let changed=false;
@@ -1989,8 +2010,12 @@ async function pushLocal(){
   const ups=rows.filter(o=>!o.deleted), dels=rows.filter(o=>o.deleted);
   for(let i=0;i<ups.length;i+=50){
     const chunk=ups.slice(i,i+50);
-    const {error}=await sbClient().from(SB_TABLE).upsert(chunk.map(toRemote),{onConflict:"id"});
-    if(error) throw error;
+    for(;;){
+      const rows=chunk.map(o=>{const r=toRemote(o);sbMissing.forEach(c=>{delete r[c];});return r;});
+      const {error}=await sbClient().from(SB_TABLE).upsert(rows,{onConflict:"id"});
+      if(!error) break;
+      if(!missingColFrom(error)) throw error;
+    }
     for(const o of chunk){
       const cur=await getObs(o.id);
       if(!cur||cur.updated_at!==o.updated_at) continue;
