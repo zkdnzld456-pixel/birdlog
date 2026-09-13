@@ -177,6 +177,25 @@
     font-family:inherit;color:var(--amber-soft);cursor:pointer;
   }
 
+  /* 기록 화면 사진 첨부 — 고른 사진이 있을 때만 썸네일 줄이 보인다 */
+  .logph-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .logph-btn{
+    background:var(--bark);border:1.5px solid var(--line);border-radius:20px;padding:7px 13px;
+    font-size:13px;font-weight:700;font-family:inherit;color:var(--amber-soft);cursor:pointer;white-space:nowrap;
+  }
+  .logph-btn:active{transform:scale(.97)}
+  .logph-btn .opt{margin-left:2px}
+  .logph-list{display:flex;gap:8px;flex-wrap:wrap}
+  .logph-list[hidden]{display:none}
+  .logph-list .ph{position:relative;display:inline-block}
+  .logph-list img{width:44px;height:44px;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:block}
+  .logph-list .phdel{
+    position:absolute;top:-7px;right:-7px;width:20px;height:20px;border-radius:50%;
+    border:2px solid #fff;background:#16302f;color:#fff;font-size:10px;line-height:1;
+    padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;
+    box-shadow:0 1px 4px rgba(0,0,0,.3);
+  }
+
   .save{
     width:100%;background:linear-gradient(180deg,var(--amber) 0%,var(--amber-d) 100%);
     color:#ffffff;border-radius:13px;padding:16px;
@@ -598,8 +617,15 @@
       <textarea id="memo" placeholder="행동, 깃털, 울음소리, 날씨 …"></textarea>
     </div>
 
+    <div class="field">
+      <div class="logph-row">
+        <button type="button" class="logph-btn" id="log-addph">＋ 사진 <span class="opt">· 선택</span></button>
+        <div class="logph-list" id="log-phlist" hidden></div>
+      </div>
+    </div>
+
     <button class="save" id="save">기록 저장</button>
-    <p class="hint">사진은 저장 후 목록에서 언제든 추가할 수 있어요.</p>
+    <p class="hint">사진은 저장 후 목록에서도 언제든 추가할 수 있어요.</p>
   </section>
 
   <!-- ===== LIST ===== -->
@@ -785,6 +811,7 @@
   </div>
 </div>
 <input type="file" id="photofile" accept="image/*" multiple style="display:none">
+<input type="file" id="logphotofile" accept="image/*" multiple style="display:none">
 <input type="file" id="importfile" accept="application/json,.json" style="display:none">
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
@@ -1208,8 +1235,15 @@ $("#save").onclick=async()=>{
     lat:curPos?curPos.lat:null,lng:curPos?curPos.lng:null,acc:curPos?curPos.acc:null,place:curPlace,
     count:$("#count").value?parseInt($("#count").value,10):null,
     tags:parseTags($("#tags").value),memo:$("#memo").value.trim(),photos:[],lifer,created:Date.now()};
+  const btn=$("#save");
   try{
+    if(logPhotos.length){
+      btn.disabled=true;
+      if(logPhotos.length>1) toast(logPhotos.length+"장 준비 중…");
+      o.photos=await buildPhotoItems(logPhotos.map(p=>p.file));
+    }
     await saveObs(o);
+    clearLogPhotos();
     if(lifer==="yes") showLiferFx(species);          // 순번은 붙이지 않는다
     else if(lifer==="maybe") toast("종추? 로 저장했어요");
     else toast("저장됐어요 · "+species);
@@ -1217,6 +1251,7 @@ $("#save").onclick=async()=>{
     logLifer="no";paintLogLifer();
     fillNow();grabGPS();await refreshSpeciesList();await renderAll();$("#species").focus();
   }catch(e){toast("저장 실패 — 저장공간을 확인해 주세요");console.error(e);}
+  btn.disabled=false;
 };
 
 /* ============ list ============ */
@@ -1492,21 +1527,54 @@ async function ensureThumbs(o){
 
 /* ============ photos ============ */
 let photoTargetId=null;function startAddPhoto(id){photoTargetId=id;$("#photofile").value="";$("#photofile").click();}
+/* 파일 → 기록에 붙일 사진 항목 (압축본 + 썸네일, 동기화는 꺼짐). 목록의 "＋ 사진" 과 기록 화면 첨부가 같이 쓴다 */
+async function buildPhotoItems(files){
+  const items=[];
+  for(const f of files){
+    const blob=await compressPhoto(f);
+    items.push({id:uid(),blob,thumb:await makeThumb(blob),path:null,thumbPath:null,uploaded:false,sync:false});
+  }
+  return items;
+}
 $("#photofile").onchange=async e=>{
   const files=[...e.target.files];
   if(!files.length||!photoTargetId)return;
   const o=await getObs(photoTargetId);
   if(!o)return;
   if(files.length>1) toast(files.length+"장 준비 중…");
-  const items=[];
-  for(const f of files){
-    const blob=await compressPhoto(f);
-    items.push({id:uid(),blob,thumb:await makeThumb(blob),path:null,thumbPath:null,uploaded:false,sync:false});
-  }
+  const items=await buildPhotoItems(files);
   o.photos=(o.photos||[]).concat(items);
   await saveObs(o);
   await renderAll();
   toast(files.length+"장 추가됨");
+};
+
+/* ---- 기록 화면 첨부: 고른 파일은 저장 버튼을 누를 때 압축해 기록에 붙는다 ---- */
+let logPhotos=[];     // {id,file,url}
+function paintLogPhotos(){
+  const list=$("#log-phlist"), btn=$("#log-addph");
+  list.innerHTML=logPhotos.map(p=>`<span class="ph"><img src="${p.url}" alt="고른 사진"><button type="button" class="phdel" data-id="${p.id}" aria-label="사진 빼기">✕</button></span>`).join("");
+  list.hidden=!logPhotos.length;
+  btn.innerHTML=logPhotos.length?`＋ 사진 <span class="opt">· ${logPhotos.length}장</span>`:`＋ 사진 <span class="opt">· 선택</span>`;
+  list.querySelectorAll(".phdel").forEach(b=>b.onclick=()=>{
+    const i=logPhotos.findIndex(p=>p.id===b.dataset.id);
+    if(i<0) return;
+    URL.revokeObjectURL(logPhotos[i].url);
+    logPhotos.splice(i,1);
+    paintLogPhotos();
+  });
+}
+function clearLogPhotos(){
+  logPhotos.forEach(p=>URL.revokeObjectURL(p.url));
+  logPhotos=[];
+  paintLogPhotos();
+}
+$("#log-addph").onclick=()=>{$("#logphotofile").value="";$("#logphotofile").click();};
+$("#logphotofile").onchange=e=>{
+  const files=[...e.target.files].filter(f=>/^image\//.test(f.type||""));
+  if(!files.length) return;
+  files.forEach(f=>logPhotos.push({id:uid(),file:f,url:URL.createObjectURL(f)}));
+  paintLogPhotos();
 };
 
 /* 사진 한 칸. 이 기기에 파일도 없고 서버 경로도 없는 사진 = 다른 기기에만 있는 사진 */
