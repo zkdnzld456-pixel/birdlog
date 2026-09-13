@@ -349,6 +349,13 @@
   .lrow .fd{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
   .lrow .cn{min-width:38px;text-align:right;font-size:12.5px;font-weight:600;color:var(--amber);
     font-variant-numeric:tabular-nums;white-space:nowrap}
+  /* 라이프리스트 접기·검색 */
+  .lifeq{margin-bottom:8px;padding:10px 12px;font-size:14px;border-width:1.5px;border-radius:9px}
+  .lifemore{width:100%;margin-top:8px;background:var(--bark);border:1.5px solid var(--line);border-radius:11px;
+    padding:11px;font-size:13px;font-weight:700;font-family:inherit;color:var(--amber-soft);cursor:pointer}
+  .lifemore:active{background:var(--bark-2)}
+  .lifenone{background:var(--bark);border:1.5px dashed var(--line);border-radius:11px;
+    padding:18px 14px;text-align:center;font-size:12.5px;color:var(--muted)}
   .st-soon{background:var(--bark);border:1.5px dashed var(--line);border-radius:11px;
     padding:26px 16px;text-align:center;font-size:13px;color:var(--muted)}
   .st-soon b{display:block;font-size:14px;color:var(--cream);margin-bottom:3px}
@@ -2477,10 +2484,42 @@ async function renderStats(obsIn){
     lifeSort==="count"?(a,b)=>b.n-a.n||byName(a,b):
     (a,b)=>(b.first>a.first?1:b.first<a.first?-1:0)||byName(a,b));   // 첫 관찰일 최근 먼저, 날짜 없으면 맨 뒤
   document.querySelectorAll("#st-sorts .chip").forEach(c=>c.classList.toggle("on",c.dataset.s===lifeSort));
-  const wrap=$("#st-life");
-  if(!lifeRows.length){wrap.innerHTML=`<div class="empty"><p><b>아직 본 종이 없어요</b></p><p>‘기록’ 탭에서 첫 관찰을 남겨 보세요.</p></div>`;return;}
-  wrap.innerHTML=`<div class="lifelist">${lifeRows.map((s,i)=>`<button class="lrow" data-i="${i}"><span class="nm">${s.lifer?'<i class="lstar">★</i>':''}${esc(s.name)}</span><span class="fd">${s.first?s.first.slice(0,10).replace(/-/g,"."):"—"}</span><span class="cn">${num(s.n)}회</span></button>`).join("")}</div>`;
-  wrap.querySelectorAll(".lrow").forEach(r=>r.onclick=()=>openSpecies(lifeRows[+r.dataset.i].name));
+  renderLifeList();
+}
+
+/* ---- 라이프리스트 접기·검색 ----
+   접힌 상태는 현재 정렬 기준 상위 LIFE_PEEK 종만. 펼치면 전체 + 종명 검색(부분 일치, 즉시).
+   펼침·검색어는 세션 동안 유지돼 탭을 오가도 그대로다. 접으면 검색어는 비운다. */
+const LIFE_PEEK=5;
+let lifeOpen=false, lifeQuery="";
+function lifeRowHTML(s,i){
+  return `<button class="lrow" data-i="${i}"><span class="nm">${s.lifer?'<i class="lstar">★</i>':''}${esc(s.name)}</span>`
+    +`<span class="fd">${s.first?s.first.slice(0,10).replace(/-/g,"."):"—"}</span>`
+    +`<span class="cn">${s.n.toLocaleString("ko-KR")}회</span></button>`;
+}
+/* 행만 다시 그린다 — 검색창은 그대로 두어 입력 중 포커스가 빠지지 않게 */
+function renderLifeRows(){
+  const box=$("#life-rows"); if(!box) return;
+  const q=lifeQuery.trim().toLowerCase();
+  const rows=lifeOpen
+    ? lifeRows.map((s,i)=>[s,i]).filter(([s])=>!q||s.name.toLowerCase().includes(q))
+    : lifeRows.slice(0,LIFE_PEEK).map((s,i)=>[s,i]);
+  box.innerHTML=rows.length
+    ? `<div class="lifelist">${rows.map(([s,i])=>lifeRowHTML(s,i)).join("")}</div>`
+    : `<div class="lifenone">‘${esc(lifeQuery.trim())}’에 맞는 종이 없어요</div>`;
+  box.querySelectorAll(".lrow").forEach(r=>r.onclick=()=>openSpecies(lifeRows[+r.dataset.i].name));
+}
+function renderLifeList(){
+  const wrap=$("#st-life"); if(!wrap) return;
+  const n=lifeRows.length;
+  if(!n){wrap.innerHTML=`<div class="empty"><p><b>아직 본 종이 없어요</b></p><p>‘기록’ 탭에서 첫 관찰을 남겨 보세요.</p></div>`;return;}
+  if(n<=LIFE_PEEK){lifeOpen=false;lifeQuery="";}   // 다 보이는데 펼칠 게 없다
+  wrap.innerHTML=(lifeOpen?`<input class="lifeq" id="life-q" placeholder="종명 검색" autocomplete="off" enterkeyhint="search" value="${attr(lifeQuery)}">`:"")
+    +`<div id="life-rows"></div>`
+    +(n>LIFE_PEEK?`<button class="lifemore" id="life-more" type="button">${lifeOpen?"접기":`전체 보기 (${n.toLocaleString("ko-KR")}종)`}</button>`:"");
+  renderLifeRows();
+  const q=$("#life-q"); if(q) q.oninput=()=>{lifeQuery=q.value;renderLifeRows();};
+  const more=$("#life-more"); if(more) more.onclick=()=>{lifeOpen=!lifeOpen;if(!lifeOpen)lifeQuery="";renderLifeList();};
 }
 async function renderPhotoQuota(){
   const el=$("#st-photo"); if(!el) return;
